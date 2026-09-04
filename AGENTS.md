@@ -518,6 +518,17 @@ Neff -> (2 - alpha) / alpha
 
 ---
 
+## Empty-state interpretation
+
+The reset / empty storage representation is an implementation sentinel, not a
+statistical population.
+
+The empty state is identified by:
+
+```text
+mean = NaN
+
+
 # AdaptiveMomentsState derived views
 
 The initial generic derived statistics should include:
