@@ -638,10 +638,7 @@ export type AdaptiveCovarianceState
 // Stores recursively weighted central moments together with the derived
 // distribution statistics required by the recursive estimation framework.
 //
-//@field mean Current recursively weighted location estimate.
-//@field m2 Second recursively weighted central moment.
-//@field m3 Third recursively weighted central moment.
-//@field m4 Fourth recursively weighted central moment.
+//@field moments Generic recursively weighted central-moment population state.
 //@field absInnovation recursively weighted absolute innovation.
 //@field sigma Recursive standard scale sqrt(m2).
 //@field tScale Student-t variance-equivalent scale derived from sigma and
@@ -651,11 +648,7 @@ export type AdaptiveCovarianceState
 //@field df Effective bounded Student-t degrees of freedom.
 //@field kurtosis Recursively weighted Pearson kurtosis m4 / m2².
 export type HeavyTailState
-    float mean          = na
-
-    float m2            = 0.0
-    float m3            = 0.0
-    float m4            = 0.0
+    AdaptiveMomentsState moments
 
     float absInnovation = 0.0
 
@@ -3263,55 +3256,47 @@ export method update(
             // -------------------------------------------------------------------------
             // INITIALIZATION / CENTRAL-MOMENT RECURSION
             // -------------------------------------------------------------------------
-            if na(this.mean) or alpha >= 1.0
+            bool emptyPopulation = na(this.moments)
 
-                this.mean          := input
-                this.m2            := 0.0
-                this.m3            := 0.0
-                this.m4            := 0.0
+            if not emptyPopulation
+                emptyPopulation := na(this.moments.mean)
+
+            if na(this.moments)
+                this.moments := AdaptiveMomentsState.new()
+
+            if emptyPopulation or alpha >= 1.0
+
+                this.moments.update(
+                    input,
+                    alpha
+                )
+
                 this.absInnovation := 0.0
 
             else
 
                 // Previous distribution state.
-                float oldMean = this.mean
-                float oldM2   = this.m2
-                float oldM3   = this.m3
-                float oldM4   = this.m4
+                float oldMean          = this.moments.mean
+                float oldAbsInnovation = this.absInnovation
 
                 // Innovation around PREVIOUS location.
-                float delta  = input - oldMean
-                float delta2 = delta * delta
-                float delta3 = delta2 * delta
-                float delta4 = delta2 * delta2
+                float delta = input - oldMean
 
-                // Recursively weighted location.
-                this.mean := oldMean + alpha * delta
-
-                // Recursively weighted second central moment.
-                this.m2 := beta * oldM2 + alpha * beta * delta2
-
-                // Recursively weighted third central moment.
-                this.m3 := (beta * oldM3 - 3.0 
-                    * alpha * beta * delta * oldM2) +  
-                     alpha * beta * (beta - alpha) * delta3
-
-                // Recursively weighted fourth central moment.
-                this.m4 := (beta * oldM4 - 4.0 * alpha 
-                    * beta * delta * oldM3) + 6.0 * alpha 
-                     * alpha * beta * delta2 * oldM2
-                     + alpha * beta * (1.0 - 3.0 * alpha * beta) * delta4
+                this.moments.update(
+                    input,
+                    alpha
+                )
 
                 // Recursively weighted absolute innovation.
-                this.absInnovation := beta * this.absInnovation
+                this.absInnovation := beta * oldAbsInnovation
                      + alpha * math.abs(delta)
 
             // -------------------------------------------------------------------------
             // EMPIRICAL DISPERSION
             // -------------------------------------------------------------------------
-            float variance = math.max( 
-                     this.m2,
-                     0.0 
+            float variance = math.max(
+                     this.moments.m2,
+                     0.0
             )
 
             this.sigma := math.sqrt(variance)
@@ -3324,7 +3309,7 @@ export method update(
             //     K = 3
             // -------------------------------------------------------------------------
             this.kurtosis := variance > MIN_FLOAT
-                 ? this.m4 / (variance * variance)
+                 ? this.moments.m4 / (variance * variance)
                  : 3.0
 
             // -------------------------------------------------------------------------
@@ -3394,10 +3379,10 @@ export method reset(
     HeavyTailState this
 ) =>
 
-    this.mean               := na
-    this.m2                 := 0.0
-    this.m3                 := 0.0
-    this.m4                 := 0.0
+    if na(this.moments)
+        this.moments := AdaptiveMomentsState.new()
+
+    this.moments.reset()
     this.absInnovation      := 0.0
     this.sigma              := 0.0
     this.tScale             := 0.0
@@ -4370,11 +4355,16 @@ export heavyTailDistribution(
         degreesOfFreedom
     )
 
+    float stateMean = na
+
+    if not na(state.moments)
+        stateMean := state.moments.mean
+
     bool hasEstimate =
          validObservation
-         and not na(state.mean)
+         and not na(stateMean)
 
-    [ hasEstimate ? state.mean        : na,
+    [ hasEstimate ? stateMean         : na,
       hasEstimate ? state.sigma       : na, 
       hasEstimate ? state.tScale      : na,
       hasEstimate ? state.absInnovationScale : na,
