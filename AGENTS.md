@@ -1353,12 +1353,16 @@ unless later intentionally expanded.
 
 # HeavyTail migration policy
 
-Current HeavyTail behavior is an oracle during generic-moment migration.
+Pre-migration HeavyTail behavior served as the validation oracle during
+generic-moment migration.
 
-Do not refactor HeavyTail until generic AdaptiveMoments behavior is accepted in
-both Python and Pine.
+The migration is complete and validated. `HeavyTailState` now embeds one
+`AdaptiveMomentsState` and delegates generic central-moment population mechanics
+to it. Historical HeavyTail behavior remains preserved except for the explicitly
+accepted pre-release structural field-path change from direct `mean` / `m2` /
+`m3` / `m4` fields to fields under `moments`.
 
-Migration sequence:
+Completed migration sequence:
 
 ```text
 1. validate Python AdaptiveMomentsState
@@ -1371,7 +1375,8 @@ Migration sequence:
 8. prove HeavyTail outputs remain unchanged except explicitly approved startup cleanup
 ```
 
-HeavyTail currently owns model-specific state beyond generic central moments.
+HeavyTail retains ownership of model-specific state beyond generic central
+moments.
 
 Examples include:
 
@@ -1427,24 +1432,23 @@ m4
 
 under equivalent valid updates.
 
-A later HeavyTail migration should harmonize startup semantics onto the generic
-population contract unless a newly discovered compatibility constraint requires
-otherwise.
+Historical HeavyTail empty-plus-alpha-zero behavior remains preserved after the
+completed migration. Harmonizing it with the generic population contract is a
+separate deferred policy decision.
 
 ---
 
 # Pine AdaptiveMoments integration policy
 
-Pine `AdaptiveMomentsState` should initially expose the state object and state
-methods only.
+Pine `AdaptiveMomentsState` exposes the state object and state methods only.
 
-Initial public type:
+Current public type:
 
 ```text
 AdaptiveMomentsState
 ```
 
-Initial public methods:
+Current public methods:
 
 ```text
 reset()
@@ -1464,14 +1468,15 @@ excessKurtosis()
 effectiveSampleSize()
 ```
 
-Do not add a public functional:
+A public functional remains intentionally deferred:
 
 ```text
 adaptiveMoments(...)
 ```
 
-until its tuple shape, output order, and missing-call output policy are
-explicitly designed and accepted.
+It is not required for component closure and must not be added until its tuple
+shape, output order, and missing-call output policy are explicitly designed and
+accepted.
 
 ---
 
@@ -1853,13 +1858,15 @@ adaptiveHuber
 adaptive MAD / robust scale
 adaptive covariance / correlation
 recursive regression / beta
-Python AdaptiveMomentsState
+Python and Pine AdaptiveMomentsState
+HeavyTail generic-moment migration
 ```
 
-Pine AdaptiveMomentsState becomes closed only after successful Pine
-implementation and deterministic TradingView validation.
+Python and Pine `AdaptiveMomentsState` are implemented, validated, and closed.
 
-HeavyTail migration remains a later dependent phase.
+HeavyTail migration onto the generic moment state is complete and validated.
+HeavyTail startup harmonization and a public functional `adaptiveMoments(...)`
+remain separate deferred policy/API decisions.
 
 ---
 

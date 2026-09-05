@@ -263,10 +263,10 @@ Student-t variance-equivalent scale
 Gaussian-equivalent absolute-innovation scale
 ```
 
-The architecture is being refined so that ordinary central moments belong to a
-generic statistical-moment backbone, while HeavyTail becomes a higher-level
-distribution interpretation rather than the conceptual owner of generic
-moments.
+`AdaptiveMomentsState` owns the generic retained central-moment population.
+`HeavyTailState` embeds that state and adds HeavyTail-specific model
+interpretation, including absolute-innovation scale, standard scale, kurtosis,
+Student-t degrees of freedom, and Student-t scale.
 
 ---
 
