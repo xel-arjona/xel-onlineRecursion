@@ -506,6 +506,63 @@ export type AdaptiveHuberState
     float tuning = na
 
 
+//@type Persistent normalized exponentially weighted univariate central-moment
+// state.
+//
+// Represents one normalized recursively weighted observation population using
+// sufficient statistics through the fourth central moment.
+//
+// For an initialized state and a clamped coefficient strictly between zero and
+// one, the update uses the previous mean and central moments:
+//
+//     delta = input - previousMean
+//
+//     mean =
+//         previousMean
+//         + alpha * delta
+//
+//     m2 =
+//         (1-alpha) * previousM2
+//         + alpha * (1-alpha) * delta^2
+//
+//     m3 =
+//         (1-alpha) * previousM3
+//         - 3 * alpha * (1-alpha) * delta * previousM2
+//         + alpha * (1-alpha) * (1 - 2*alpha) * delta^3
+//
+//     m4 =
+//         (1-alpha) * previousM4
+//         - 4 * alpha * (1-alpha) * delta * previousM3
+//         + 6 * alpha^2 * (1-alpha) * delta^2 * previousM2
+//         + alpha * (1-alpha)
+//             * (1 - 3*alpha*(1-alpha)) * delta^4
+//
+// The state additionally tracks normalized-weight concentration:
+//
+//     weightSquareSum =
+//         (1-alpha)^2 * previousWeightSquareSum
+//         + alpha^2
+//
+// Alpha is clamped to [0,1]. The first valid observation initializes a
+// singleton population directly regardless of the clamped alpha, including
+// alpha = 0. Active alpha = 0 freezes the complete population. Active alpha =
+// 1 replaces it with the current singleton.
+//
+// Missing input or alpha preserves the complete retained state.
+//
+//@field mean            Current exponentially weighted population mean.
+//@field m2              Raw exponentially weighted second central moment.
+//@field m3              Raw exponentially weighted third central moment.
+//@field m4              Raw exponentially weighted fourth central moment.
+//@field weightSquareSum Sum of squared normalized observation weights.
+export type AdaptiveMomentsState
+    float mean = na
+    float m2 = 0.0
+    float m3 = 0.0
+    float m4 = 0.0
+    float weightSquareSum = 1.0
+
+
 //@type Persistent exponentially weighted bivariate central-moment state.
 //
 // Tracks paired observations x and y using one common exponentially weighted
@@ -581,10 +638,7 @@ export type AdaptiveCovarianceState
 // Stores recursively weighted central moments together with the derived
 // distribution statistics required by the recursive estimation framework.
 //
-//@field mean Current recursively weighted location estimate.
-//@field m2 Second recursively weighted central moment.
-//@field m3 Third recursively weighted central moment.
-//@field m4 Fourth recursively weighted central moment.
+//@field moments Generic recursively weighted central-moment population state.
 //@field absInnovation recursively weighted absolute innovation.
 //@field sigma Recursive standard scale sqrt(m2).
 //@field tScale Student-t variance-equivalent scale derived from sigma and
@@ -594,11 +648,7 @@ export type AdaptiveCovarianceState
 //@field df Effective bounded Student-t degrees of freedom.
 //@field kurtosis Recursively weighted Pearson kurtosis m4 / m2².
 export type HeavyTailState
-    float mean          = na
-
-    float m2            = 0.0
-    float m3            = 0.0
-    float m4            = 0.0
+    AdaptiveMomentsState moments
 
     float absInnovation = 0.0
 
@@ -2442,6 +2492,346 @@ export method update(
 
 
 //@function
+// Resets a persistent adaptive moment state.
+//
+// Restores the empty-state marker and neutral retained-field placeholders.
+// The placeholders do not represent a statistical population while mean is
+// na.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    The reset AdaptiveMomentsState object.
+export method reset(
+    AdaptiveMomentsState this
+) =>
+
+    this.mean := na
+    this.m2 := 0.0
+    this.m3 := 0.0
+    this.m4 := 0.0
+    this.weightSquareSum := 1.0
+
+    this
+
+
+//@function
+// Updates a normalized exponentially weighted univariate moment population.
+//
+// Alpha is clamped to [0,1].
+//
+// Missing input or alpha preserves the complete retained state.
+//
+// The first valid observation initializes the normalized singleton population
+// directly regardless of the clamped alpha, including alpha = 0.
+//
+// For an active population, alpha = 0 freezes every retained field exactly and
+// alpha = 1 replaces the population with the current singleton observation.
+//
+// For 0 < alpha < 1, all central-moment updates use snapshots of the complete
+// previous state. Newly updated lower moments are not used by higher-moment
+// updates.
+//
+//@param this  Persistent AdaptiveMomentsState object.
+//@param input Current observation.
+//@param alpha Recursive weighting coefficient.
+//@returns     The updated AdaptiveMomentsState object.
+export method update(
+    AdaptiveMomentsState this,
+    series float input,
+    series float alpha
+) =>
+
+    bool validObservation =
+         not na(input)
+         and not na(alpha)
+
+    if validObservation
+
+        float coefficient = clamp(
+            alpha,
+            0.0,
+            1.0
+        )
+
+        if na(this.mean)
+
+            this.mean := input
+            this.m2 := 0.0
+            this.m3 := 0.0
+            this.m4 := 0.0
+            this.weightSquareSum := 1.0
+
+        else if coefficient >= 1.0
+
+            this.mean := input
+            this.m2 := 0.0
+            this.m3 := 0.0
+            this.m4 := 0.0
+            this.weightSquareSum := 1.0
+
+        else if coefficient > 0.0
+
+            float oldMean = this.mean
+            float oldM2 = this.m2
+            float oldM3 = this.m3
+            float oldM4 = this.m4
+            float oldWeightSquareSum =
+                 this.weightSquareSum
+
+            float retention =
+                 1.0 - coefficient
+
+            float delta =
+                 input - oldMean
+
+            float delta2 =
+                 delta * delta
+
+            float delta3 =
+                 delta2 * delta
+
+            float delta4 =
+                 delta2 * delta2
+
+            this.mean :=
+                 oldMean
+                 + coefficient
+                 * delta
+
+            this.m2 :=
+                 retention
+                 * oldM2
+                 + coefficient
+                 * retention
+                 * delta2
+
+            this.m3 :=
+                 retention
+                 * oldM3
+                 - 3.0
+                 * coefficient
+                 * retention
+                 * delta
+                 * oldM2
+                 + coefficient
+                 * retention
+                 * (
+                     retention
+                     - coefficient
+                 )
+                 * delta3
+
+            this.m4 :=
+                 retention
+                 * oldM4
+                 - 4.0
+                 * coefficient
+                 * retention
+                 * delta
+                 * oldM3
+                 + 6.0
+                 * coefficient
+                 * coefficient
+                 * retention
+                 * delta2
+                 * oldM2
+                 + coefficient
+                 * retention
+                 * (
+                     1.0
+                     - 3.0
+                     * coefficient
+                     * retention
+                 )
+                 * delta4
+
+            this.weightSquareSum :=
+                 retention
+                 * retention
+                 * oldWeightSquareSum
+                 + coefficient
+                 * coefficient
+
+    this
+
+
+//@function
+// Returns the raw exponentially weighted population variance.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Raw second central moment, or na while empty.
+export method variance(
+    AdaptiveMomentsState this
+) =>
+
+    not na(this.mean)
+         ? this.m2
+         : na
+
+
+//@function
+// Returns the finite-weight central-moment correction denominator:
+//
+//     1 - weightSquareSum
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Current correction denominator, or na while empty.
+export method correctionDenominator(
+    AdaptiveMomentsState this
+) =>
+
+    not na(this.mean)
+         ? 1.0 - this.weightSquareSum
+         : na
+
+
+//@function
+// Returns finite-weight corrected population variance when defined.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Corrected variance, or na when empty or undefined.
+export method correctedVariance(
+    AdaptiveMomentsState this
+) =>
+
+    float denominator =
+         this.correctionDenominator()
+
+    (
+        not na(denominator)
+        and denominator > 0.0
+    )
+         ? this.m2 / denominator
+         : na
+
+
+//@function
+// Returns raw exponentially weighted population sigma.
+//
+// A negative m2 is not clamped or otherwise altered.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Square root of m2, or na when empty or m2 is negative.
+export method sigma(
+    AdaptiveMomentsState this
+) =>
+
+    (
+        not na(this.mean)
+        and this.m2 >= 0.0
+    )
+         ? math.sqrt(this.m2)
+         : na
+
+
+//@function
+// Returns finite-weight corrected population sigma when defined.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Square root of corrected variance, or na when undefined.
+export method correctedSigma(
+    AdaptiveMomentsState this
+) =>
+
+    float correctedValue =
+         this.correctedVariance()
+
+    (
+        not na(correctedValue)
+        and correctedValue >= 0.0
+    )
+         ? math.sqrt(correctedValue)
+         : na
+
+
+//@function
+// Returns raw moment skewness:
+//
+//     m3 / m2^(3/2)
+//
+// No finite-sample skewness correction is applied.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Current skewness, or na when variance is not positive.
+export method skewness(
+    AdaptiveMomentsState this
+) =>
+
+    (
+        not na(this.mean)
+        and this.m2 > 0.0
+    )
+         ? this.m3
+             / (
+                 this.m2
+                 * math.sqrt(this.m2)
+             )
+         : na
+
+
+//@function
+// Returns raw Pearson moment kurtosis:
+//
+//     m4 / m2^2
+//
+// No finite-sample kurtosis correction is applied.
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Current Pearson kurtosis, or na when variance is not positive.
+export method kurtosis(
+    AdaptiveMomentsState this
+) =>
+
+    (
+        not na(this.mean)
+        and this.m2 > 0.0
+    )
+         ? this.m4
+             / (
+                 this.m2
+                 * this.m2
+             )
+         : na
+
+
+//@function
+// Returns excess moment kurtosis:
+//
+//     kurtosis - 3
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Current excess kurtosis, or na when kurtosis is undefined.
+export method excessKurtosis(
+    AdaptiveMomentsState this
+) =>
+
+    float pearsonKurtosis =
+         this.kurtosis()
+
+    not na(pearsonKurtosis)
+         ? pearsonKurtosis - 3.0
+         : na
+
+
+//@function
+// Returns effective sample size implied by normalized-weight concentration:
+//
+//     Neff = 1 / weightSquareSum
+//
+//@param this Persistent AdaptiveMomentsState object.
+//@returns    Current effective sample size, or na when empty or undefined.
+export method effectiveSampleSize(
+    AdaptiveMomentsState this
+) =>
+
+    (
+        not na(this.mean)
+        and this.weightSquareSum > 0.0
+    )
+         ? 1.0 / this.weightSquareSum
+         : na
+
+
+//@function
 // Resets a persistent adaptive covariance state.
 //
 //@param this Persistent AdaptiveCovarianceState object.
@@ -2866,55 +3256,47 @@ export method update(
             // -------------------------------------------------------------------------
             // INITIALIZATION / CENTRAL-MOMENT RECURSION
             // -------------------------------------------------------------------------
-            if na(this.mean) or alpha >= 1.0
+            bool emptyPopulation = na(this.moments)
 
-                this.mean          := input
-                this.m2            := 0.0
-                this.m3            := 0.0
-                this.m4            := 0.0
+            if not emptyPopulation
+                emptyPopulation := na(this.moments.mean)
+
+            if na(this.moments)
+                this.moments := AdaptiveMomentsState.new()
+
+            if emptyPopulation or alpha >= 1.0
+
+                this.moments.update(
+                    input,
+                    alpha
+                )
+
                 this.absInnovation := 0.0
 
             else
 
                 // Previous distribution state.
-                float oldMean = this.mean
-                float oldM2   = this.m2
-                float oldM3   = this.m3
-                float oldM4   = this.m4
+                float oldMean          = this.moments.mean
+                float oldAbsInnovation = this.absInnovation
 
                 // Innovation around PREVIOUS location.
-                float delta  = input - oldMean
-                float delta2 = delta * delta
-                float delta3 = delta2 * delta
-                float delta4 = delta2 * delta2
+                float delta = input - oldMean
 
-                // Recursively weighted location.
-                this.mean := oldMean + alpha * delta
-
-                // Recursively weighted second central moment.
-                this.m2 := beta * oldM2 + alpha * beta * delta2
-
-                // Recursively weighted third central moment.
-                this.m3 := (beta * oldM3 - 3.0 
-                    * alpha * beta * delta * oldM2) +  
-                     alpha * beta * (beta - alpha) * delta3
-
-                // Recursively weighted fourth central moment.
-                this.m4 := (beta * oldM4 - 4.0 * alpha 
-                    * beta * delta * oldM3) + 6.0 * alpha 
-                     * alpha * beta * delta2 * oldM2
-                     + alpha * beta * (1.0 - 3.0 * alpha * beta) * delta4
+                this.moments.update(
+                    input,
+                    alpha
+                )
 
                 // Recursively weighted absolute innovation.
-                this.absInnovation := beta * this.absInnovation
+                this.absInnovation := beta * oldAbsInnovation
                      + alpha * math.abs(delta)
 
             // -------------------------------------------------------------------------
             // EMPIRICAL DISPERSION
             // -------------------------------------------------------------------------
-            float variance = math.max( 
-                     this.m2,
-                     0.0 
+            float variance = math.max(
+                     this.moments.m2,
+                     0.0
             )
 
             this.sigma := math.sqrt(variance)
@@ -2927,7 +3309,7 @@ export method update(
             //     K = 3
             // -------------------------------------------------------------------------
             this.kurtosis := variance > MIN_FLOAT
-                 ? this.m4 / (variance * variance)
+                 ? this.moments.m4 / (variance * variance)
                  : 3.0
 
             // -------------------------------------------------------------------------
@@ -2997,10 +3379,10 @@ export method reset(
     HeavyTailState this
 ) =>
 
-    this.mean               := na
-    this.m2                 := 0.0
-    this.m3                 := 0.0
-    this.m4                 := 0.0
+    if na(this.moments)
+        this.moments := AdaptiveMomentsState.new()
+
+    this.moments.reset()
     this.absInnovation      := 0.0
     this.sigma              := 0.0
     this.tScale             := 0.0
@@ -3973,11 +4355,16 @@ export heavyTailDistribution(
         degreesOfFreedom
     )
 
+    float stateMean = na
+
+    if not na(state.moments)
+        stateMean := state.moments.mean
+
     bool hasEstimate =
          validObservation
-         and not na(state.mean)
+         and not na(stateMean)
 
-    [ hasEstimate ? state.mean        : na,
+    [ hasEstimate ? stateMean         : na,
       hasEstimate ? state.sigma       : na, 
       hasEstimate ? state.tScale      : na,
       hasEstimate ? state.absInnovationScale : na,

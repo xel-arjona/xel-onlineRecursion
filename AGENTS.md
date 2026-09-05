@@ -1,377 +1,19 @@
-# XeL OnlineRecursion agent instructions
+# XeL OnlineRecursion — Repository Agent Contract
 
-## Project purpose
+This file defines the mathematical, architectural, validation, repository, and
+tooling rules for work on XeL OnlineRecursion.
 
-XeL OnlineRecursion is a toolkit for online / streaming statistics, recursive
-estimation, and finance-oriented stateful processing.
+Read this file completely before modifying repository content.
 
-It is heavily inspired in architectural spirit by public online-statistics and
-incremental-learning frameworks such as River, but it is not a River port and
-does not target River API compatibility.
-
-Current development release:
-
-```text
-1.0.0-rc.2 (2026-09-04)
-```
-
-License:
-
-```text
-MPL-2.0
-```
-
-The project is not yet published as a stable public API.
+When implementation details, older comments, or convenience patterns conflict
+with an accepted contract in this file, stop and report the discrepancy before
+changing semantics.
 
 ---
 
-## Repository organization
+# Project identity
 
-The repository root is platform-neutral.
-
-Current implementations:
-
-```text
-PineScript/
-    canonical Pine Script v6 production implementation
-
-Python/
-    mathematical reference implementations
-    permanent tests
-    statistical experiments
-    retained validation evidence
-```
-
-Future platform ports must remain isolated in their own top-level directories,
-for example:
-
-```text
-Quantower/
-NinjaTrader/
-Rust/
-```
-
-Do not mix platform-specific implementation files across these directories.
-
----
-
-## Core architectural principles
-
-### 1. Retained state represents a statistical population
-
-State objects should correspond to meaningful retained populations or
-sufficient statistics.
-
-Do not create separate state merely because a derived statistic has a distinct
-name.
-
-### 2. Generic statistical state belongs in foundational state objects
-
-Generic raw statistical quantities should be represented independently of
-higher-level model interpretations.
-
-The intended generic statistical backbone includes:
-
-```text
-AdaptiveMomentsState
-    mean
-    m2
-    m3
-    m4
-    weightSquareSum
-
-AdaptiveCovarianceState
-    meanX
-    meanY
-    varianceX
-    varianceY
-    covariance
-    weightSquareSum
-```
-
-### 3. Derived statistics should reuse sufficient state
-
-Whenever mathematically possible, derive statistics algebraically rather than
-maintaining redundant recursion.
-
-Examples:
-
-```text
-MAD
-    -> composition over adaptive quantile state
-
-Regression
-    -> derived from AdaptiveCovarianceState
-
-Skewness / kurtosis
-    -> derived from AdaptiveMomentsState
-
-Autocorrelation
-    -> reuse covariance state where practical
-
-Z-score
-    -> composition over retained location and scale
-```
-
-### 4. Model interpretations sit above generic statistics
-
-A specialized model should not conceptually own ordinary statistics that are
-useful outside that model.
-
-In particular, HeavyTail should ultimately be treated as a higher-level model
-interpretation above generic moment statistics rather than as the conceptual
-owner of ordinary mean / variance / skewness / kurtosis state.
-
----
-
-## Statistical semantics
-
-Population semantics are part of the mathematical API.
-
-Distinguish explicitly among:
-
-- cumulative populations
-- rolling finite populations
-- exponentially weighted populations
-- anchored populations
-- conditional populations
-- observation-clock recursions
-- event-clock recursions
-
-Do not silently substitute one population interpretation for another.
-
-Initialization, missing-data behavior, reset timing, coefficient semantics, and
-population boundaries must be treated as observable estimator behavior and
-tested accordingly.
-
----
-
-## Validation discipline
-
-Do not modify accepted estimator mathematics without an explicit mathematical
-reason.
-
-Python reference work precedes Pine production integration for new or
-refactored statistical primitives.
-
-Prefer validation in this order:
-
-```text
-1. exact derivation
-2. deterministic identity tests
-3. invariance / symmetry tests
-4. Monte Carlo or distributional validation when useful
-5. permanent regression tests
-6. Pine integration
-7. deterministic Pine validation
-```
-
-Never introduce an ad-hoc finite-sample or bias correction merely because it
-improves one simulation result.
-
-State the assumptions under which any correction is valid.
-
-Keep raw recursive population moments conceptually distinct from finite-weight
-corrected estimators.
-
----
-
-## Current accepted statistical decisions
-
-The following components are considered mathematically closed unless a genuine
-contradiction or defect is discovered:
-
-- adaptive quantile
-- adaptive expectile
-- adaptive conditional tail mean
-- adaptive Huber location
-- adaptive MAD / Gaussian-equivalent MAD scale
-- adaptive covariance / correlation
-- adaptive beta / simple linear regression
-
-Do not redesign these components opportunistically during unrelated work.
-
----
-
-## AdaptiveMoments refactor policy
-
-The next architectural objective is to introduce a generic:
-
-```text
-AdaptiveMomentsState
-```
-
-The intended retained state is:
-
-```text
-mean
-m2
-m3
-m4
-weightSquareSum
-```
-
-### Initial Python phase
-
-During the initial AdaptiveMoments Python phase:
-
-- modify only files under `Python/`
-- do not modify `PineScript/`
-- do not refactor HeavyTail yet
-- use the currently accepted HeavyTail central-moment recursion as the numerical
-  oracle
-- preserve current HeavyTail behavior
-- prove observation-by-observation equivalence for:
-  - mean
-  - m2
-  - m3
-  - m4
-
-The initial generic derived views should include:
-
-- raw variance
-- finite-weight corrected variance
-- raw sigma
-- finite-weight corrected sigma
-- skewness
-- kurtosis
-- excess kurtosis
-- effective sample size
-
-Do not invent finite-sample corrections for skewness or kurtosis during this
-phase.
-
-### Absolute innovation
-
-Absolute innovation is not an ordinary central moment.
-
-Do not add it to `AdaptiveMomentsState` without an explicit architectural
-decision.
-
-The current HeavyTail absolute-innovation machinery should remain separate
-during the first generic-moment refactor.
-
-### Finite-weight concentration
-
-`AdaptiveMomentsState` should track:
-
-```text
-weightSquareSum
-```
-
-using the same normalized-weight concentration semantics already accepted for
-`AdaptiveCovarianceState`.
-
-For deterministic or observation-independent recursive weights under the
-appropriate IID population assumptions:
-
-```text
-correction denominator
-    = 1 - weightSquareSum
-```
-
-Raw variance and finite-weight corrected variance must remain distinct.
-
----
-
-## HeavyTail migration policy
-
-Do not rewrite HeavyTail simultaneously with the initial generic-moment state.
-
-Migration should happen incrementally.
-
-Preferred sequence:
-
-```text
-1. build AdaptiveMomentsState in Python
-
-2. prove exact central-moment identity against existing HeavyTail
-
-3. validate derived generic statistics
-
-4. add permanent Python tests
-
-5. port AdaptiveMomentsState to Pine
-
-6. validate Pine moment identity
-
-7. only then refactor HeavyTail onto the generic moment backbone
-
-8. prove HeavyTail public outputs remain unchanged
-```
-
-The existing HeavyTail implementation is the migration oracle until the new
-generic moment state is independently accepted.
-
----
-
-## Python workflow
-
-Run Python commands from:
-
-```text
-Python/
-```
-
-For changed Python source or test files, always run:
-
-```text
-python -m py_compile <changed source files>
-python -m py_compile <changed test files>
-python -m pytest -q <targeted tests>
-python -m pytest -q
-```
-
-Current pre-AdaptiveMoments full-suite baseline:
-
-```text
-161 passed
-```
-
-Any unexpected reduction in this count must be investigated.
-
-Prefer simple and transparent mathematical reference implementations over
-clever abstraction.
-
-Do not add external Python dependencies unless explicitly approved.
-
-Existing dependencies may be used where they are already part of the project.
-
----
-
-## Pine Script workflow
-
-The canonical Pine production source is:
-
-```text
-PineScript/onlineRecursion.pine
-```
-
-Do not edit it during Python-only research tasks.
-
-Pine Script changes require explicit instruction.
-
-TradingView remains the authoritative Pine compiler/runtime environment.
-
-Do not assume that syntactically plausible Pine code compiles.
-
-When adding Pine functionality:
-
-- preserve established naming conventions
-- preserve reset-before-current semantics
-- preserve missing-observation semantics
-- preserve alpha semantics
-- use explicit state methods for raw statistical state
-- use algebraic methods/functions for derived statistics where possible
-
-Temporary deterministic Pine validation harnesses must be removed after
-successful validation.
-
----
-
-## Public identity
-
-Project / documentation name:
+Public project name:
 
 ```text
 XeL OnlineRecursion
@@ -386,7 +28,7 @@ xel-onlineRecursion
 Canonical Pine source:
 
 ```text
-onlineRecursion.pine
+PineScript/onlineRecursion.pine
 ```
 
 Technical Pine library identifier:
@@ -395,108 +37,1875 @@ Technical Pine library identifier:
 onlineRecursion
 ```
 
-Current project release:
+Current project release notation:
 
 ```text
 1.0.0-rc.2 (2026-09-04)
 ```
 
-TradingView publication revisions use TradingView's own independent versioning
-system and must not be conflated with project semantic-version releases.
+The project remains in pre-release architectural hardening and its public API
+has not yet been declared stable.
 
----
+TradingView publication revisions such as:
 
-## Licensing
+```text
+/1
+/2
+/3
+```
 
-The project uses:
+are TradingView publication revisions and are independent of project SemVer.
+
+Do not conflate the two versioning systems.
+
+License:
 
 ```text
 Mozilla Public License 2.0
-SPDX-License-Identifier: MPL-2.0
+MPL-2.0
 ```
 
-Do not replace or modify licensing terms unless explicitly requested.
-
-The repository-root `LICENSE` file is authoritative for project licensing.
-
-Platform-specific publication rules may impose additional requirements beyond
-the software license.
-
----
-
-## Git and repository safety
-
-Unless explicitly requested, do not:
-
-- commit
-- push
-- pull
-- merge
-- rebase
-- reset
-- amend
-- delete branches
-- force-update refs
-- create tags
-- modify remotes
-
-Do not modify files unrelated to the assigned task.
-
-Before editing, state which files you intend to modify.
-
-Do not perform broad cleanup opportunistically during a narrowly scoped task.
-
-If a requested change exposes a separate architectural issue, report it rather
-than silently expanding scope.
-
----
-
-## Codex operating policy
-
-Normal Codex work should remain inside the repository workspace.
-
-Do not request unrestricted filesystem access unless the assigned task
-genuinely requires it.
-
-During statistical development:
+The repository contains the full license text in:
 
 ```text
-ChatGPT / human review
-    architecture
-    statistical semantics
-    acceptance criteria
-
-Codex
-    repository inspection
-    implementation
-    deterministic testing
-    mechanical refactoring
-    diff preparation
-
-TradingView
-    Pine compilation
-    Pine runtime validation
+LICENSE
 ```
 
-Codex must not treat passing tests alone as evidence that altered statistical
-semantics are correct.
+River and similar libraries may be acknowledged as conceptual or architectural
+inspiration where appropriate.
 
-When mathematics changes, explain the mathematical change explicitly.
+XeL OnlineRecursion is not a River port, API compatibility layer, or wrapper.
 
 ---
 
-## Task completion report
+# Repository organization
 
-At completion of every implementation task, report:
+Canonical repository:
 
-- files changed
-- mathematical changes, if any
-- API changes, if any
-- tests executed
-- exact targeted test count
-- exact full-suite test count
-- unresolved questions
-- deviations from requested scope
-- whether Pine files were modified
+```text
+~/Dev/github/xel-onlineRecursion/
+```
 
-Do not commit or push after reporting unless explicitly instructed.
+Primary structure:
+
+```text
+xel-onlineRecursion/
+├── AGENTS.md
+├── LICENSE
+├── README.md
+├── PineScript/
+│   └── onlineRecursion.pine
+└── Python/
+    ├── src/
+    ├── tests/
+    ├── experiments/
+    └── results/
+```
+
+The repository copy is canonical.
+
+Historical or scratch Pine files outside this repository must not be treated as
+the authoritative implementation.
+
+Do not edit unrelated historical copies when repository work is requested.
+
+---
+
+# Architectural principle
+
+The project is organized around retained statistical populations.
+
+The governing rule is:
+
+```text
+Foundational state represents the population.
+Derived statistics interpret that population.
+Models add model-specific assumptions.
+Applications decide when evidence is sufficient to act.
+```
+
+This separation is mandatory.
+
+Startup maturity, warmup policy, trading readiness, signal gating, minimum-bar
+requirements, and application-level confidence must not leak into foundational
+statistical state unless mathematically required by the estimator itself.
+
+---
+
+# Population semantics
+
+A foundational recursive state represents the statistical population retained
+by the recursion.
+
+Initialization therefore means:
+
+```text
+population creation
+```
+
+It is not merely the first ordinary recursive transition.
+
+This distinction is especially important when:
+
+```text
+alpha = 0
+```
+
+A valid first observation can create a valid singleton population even though
+an already-active state with alpha zero must freeze.
+
+The population contract takes precedence over convenience behavior inherited
+from older model-specific implementations.
+
+---
+
+# Statistical architecture
+
+The intended generic backbone is:
+
+```text
+STREAM / POPULATION MECHANICS
+    existing stream states
+
+STATISTICAL STATE BACKBONE
+    AdaptiveMomentsState
+        mean
+        m2
+        m3
+        m4
+        weightSquareSum
+
+    AdaptiveCovarianceState
+        meanX
+        meanY
+        varianceX
+        varianceY
+        covariance
+        weightSquareSum
+
+    AdaptiveQuantileState
+    AdaptiveExpectileState
+    AdaptiveTailMeanState
+    AdaptiveHuberState
+
+DERIVED STATISTICS
+    variance
+    corrected variance
+    sigma
+    corrected sigma
+    skewness
+    kurtosis
+    excess kurtosis
+    effective sample size
+    covariance
+    correlation
+    regression views
+    MAD
+    Gaussian-equivalent MAD scale
+
+MODEL INTERPRETATIONS
+    HeavyTail
+        Student-t degrees of freedom
+        t scale
+        absolute-innovation scale
+        other heavy-tail-specific interpretations
+```
+
+Generic sufficient statistics should be reused rather than duplicated inside
+higher-level models.
+
+---
+
+# Validation discipline
+
+Statistical components are accepted in stages.
+
+A mathematically closed component should not be reopened without evidence of a
+real discrepancy.
+
+Valid reasons to reopen a closed component include:
+
+```text
+failed parity
+failed deterministic validation
+new mathematical contradiction
+runtime/compiler discrepancy
+documented implementation mismatch
+```
+
+Preference or stylistic cleanup alone is not sufficient.
+
+Validation should proceed from the most independent oracle available.
+
+Preferred hierarchy:
+
+```text
+1. explicit mathematical identities
+2. deterministic direct-weight calculations
+3. independent Python references
+4. observation-by-observation parity against accepted implementations
+5. Pine compiler/runtime validation in TradingView
+```
+
+Tests should distinguish:
+
+```text
+semantic identity
+mathematical correctness
+boundary behavior
+runtime integration
+```
+
+Do not treat one implementation copied into another language as the only
+evidence of correctness.
+
+---
+
+# Missing-data convention
+
+For foundational recursive states, missing required input preserves retained
+state unless a component-specific contract explicitly says otherwise.
+
+In Python, missing values normally include:
+
+```text
+None
+NaN
+```
+
+In Pine, missing values use:
+
+```text
+na
+```
+
+Missing current data may cause a functional wrapper to return `na` for that
+call while the underlying state remains unchanged.
+
+State preservation and functional-output gating are separate semantics.
+
+---
+
+# Alpha convention
+
+Where the accepted contract specifies a feedback coefficient:
+
+```text
+alpha
+```
+
+clamp it to:
+
+```text
+[0, 1]
+```
+
+unless a particular estimator explicitly defines different bounds.
+
+For normalized exponentially weighted population states:
+
+```text
+active alpha = 0
+```
+
+means exact freeze.
+
+```text
+active alpha = 1
+```
+
+means replacement by the current singleton population.
+
+First-observation semantics are defined separately from active-state semantics.
+
+---
+
+# AdaptiveExpectile — closed
+
+Accepted recurrence:
+
+```text
+innovation = input - previousValue
+
+weight =
+    level       if innovation > 0
+    1-level     if innovation < 0
+    0           if innovation == 0
+
+value += alpha * weight * innovation
+```
+
+Contract:
+
+```text
+0 < level < 1
+```
+
+No scale normalization.
+
+No factor of two.
+
+No bandwidth correction.
+
+No internal normalization.
+
+`level` is validated while active.
+
+`alpha` clamps to `[0,1]`.
+
+Missing input preserves state.
+
+The first valid observation initializes directly regardless of alpha.
+
+Active alpha zero freezes.
+
+Reset occurs before processing the current observation.
+
+Functional calls return `na` on missing required current input while retained
+state remains preserved.
+
+At:
+
+```text
+level = 0.5
+```
+
+the estimator targets the mean with effective recursion coefficient
+`alpha / 2`.
+
+This component is mathematically closed.
+
+---
+
+# AdaptiveTailMean — closed
+
+Accepted exponentially weighted conditional-tail recursion:
+
+```text
+indicator =
+    lower tail: input <= threshold
+    upper tail: input >= threshold
+
+weightedTail =
+    (1-alpha) * previousWeightedTail
+    + alpha * indicator * input
+
+tailMass =
+    (1-alpha) * previousTailMass
+    + alpha * indicator
+
+value =
+    weightedTail / tailMass
+```
+
+when tail mass is positive.
+
+This is observation-clock recursion, not event-clock recursion.
+
+The threshold is external.
+
+When coupled to an adaptive quantile, caller timing uses the previous quantile:
+
+```text
+previousQuantile = quantile.value
+
+tail.update(
+    input,
+    previousQuantile,
+    tailAlpha,
+    side
+)
+
+quantile.update(...)
+```
+
+This component is mathematically closed.
+
+---
+
+# AdaptiveHuber — closed
+
+Accepted recurrence:
+
+```text
+innovation = input - previousValue
+
+limit = tuning * scale
+
+correction =
+    clamp(
+        innovation,
+        -limit,
+        +limit
+    )
+
+value += alpha * correction
+```
+
+Contract:
+
+```text
+tuning > 0
+scale >= 0
+```
+
+Scale is external.
+
+No internal bandwidth normalization.
+
+No alpha-dependent tuning normalization.
+
+Missing input preserves state.
+
+The first valid observation initializes directly.
+
+Active alpha zero freezes.
+
+When coupled to an adaptive scale estimator, use caller-controlled previous
+scale timing rather than silently introducing same-step feedback.
+
+This component is mathematically closed.
+
+---
+
+# Adaptive MAD and robust scale — closed
+
+There is no dedicated `AdaptiveMADState`.
+
+MAD is composition:
+
+```text
+deviation = abs(input - externalCenter)
+
+rawMAD =
+    adaptiveMedian(
+        deviation,
+        alpha
+    )
+```
+
+Gaussian-equivalent robust scale uses:
+
+```text
+MAD_TO_GAUSSIAN_SCALE
+    ≈ 1.482602218505602
+```
+
+which is:
+
+```text
+1 / Phi^-1(0.75)
+```
+
+Caller timing uses the previous center where appropriate.
+
+Pine interfaces include:
+
+```text
+adaptiveMAD(...)
+gaussianScaleFromMAD(...)
+```
+
+This component is mathematically closed.
+
+---
+
+# AdaptiveCovariance — closed
+
+Retained state:
+
+```text
+meanX
+meanY
+varianceX
+varianceY
+covariance
+weightSquareSum
+```
+
+Accepted recursive update:
+
+```text
+dx = x - meanX
+dy = y - meanY
+
+meanX += alpha * dx
+meanY += alpha * dy
+
+covariance =
+    (1-alpha)
+    * (
+        covariance
+        + alpha * dx * dy
+    )
+
+varianceX =
+    (1-alpha)
+    * (
+        varianceX
+        + alpha * dx^2
+    )
+
+varianceY =
+    (1-alpha)
+    * (
+        varianceY
+        + alpha * dy^2
+    )
+
+weightSquareSum =
+    (1-alpha)^2 * weightSquareSum
+    + alpha^2
+```
+
+The finite-weight correction denominator is:
+
+```text
+1 - weightSquareSum
+```
+
+Corrected second moments are:
+
+```text
+correctedMoment =
+    rawMoment
+    / (1 - weightSquareSum)
+```
+
+when the denominator is strictly positive.
+
+Effective sample size is:
+
+```text
+Neff =
+    1 / weightSquareSum
+```
+
+when `weightSquareSum > 0`.
+
+For constant alpha in a continuing stationary recursion:
+
+```text
+weightSquareSum
+    -> alpha / (2 - alpha)
+```
+
+and therefore:
+
+```text
+Neff
+    -> (2 - alpha) / alpha
+```
+
+Correlation uses the raw ratio because the common finite-weight multiplicative
+correction cancels.
+
+The correction above is a finite-weight second-moment correction under the
+appropriate normalized recursive-weight assumptions.
+
+It does not remove general nonlinear finite-sample bias from correlation or
+other nonlinear transforms.
+
+This component is mathematically closed.
+
+---
+
+# Recursive linear regression — closed
+
+Regression is derived algebraically from `AdaptiveCovarianceState`.
+
+For `Y` on `X`:
+
+```text
+beta =
+    covariance / varianceX
+```
+
+when `varianceX > 0`.
+
+Intercept:
+
+```text
+intercept =
+    meanY - beta * meanX
+```
+
+Coefficient of determination:
+
+```text
+R^2 =
+    correlation^2
+```
+
+No separate regression state is required.
+
+Finite-weight correction cancels exactly from beta because covariance and
+variance share the same multiplicative correction.
+
+Pine methods include:
+
+```text
+betaYOnX()
+interceptYOnX()
+rSquared()
+```
+
+Functional interfaces include:
+
+```text
+adaptiveBeta()
+adaptiveLinearRegression()
+```
+
+This component is mathematically closed.
+
+---
+
+# AdaptiveMomentsState
+
+`AdaptiveMomentsState` is the generic normalized exponentially weighted
+univariate central-moment population state.
+
+It must remain model-agnostic.
+
+Retained state:
+
+```text
+mean
+m2
+m3
+m4
+weightSquareSum
+```
+
+Do not add model-specific quantities such as:
+
+```text
+absolute innovation
+Student-t degrees of freedom
+t scale
+HeavyTail-specific sigma policy
+warmup readiness
+signal maturity
+```
+
+to this foundational state.
+
+---
+
+# AdaptiveMomentsState initialization
+
+Initialization is population creation.
+
+The first valid observation with a valid alpha creates the normalized singleton
+population regardless of alpha after clamping.
+
+This includes:
+
+```text
+alpha = 0
+```
+
+Singleton initialization:
+
+```text
+mean = input
+m2 = 0
+m3 = 0
+m4 = 0
+weightSquareSum = 1
+```
+
+Therefore:
+
+```text
+empty state
++ valid input
++ alpha = 0
+```
+
+must create a singleton population.
+
+This intentionally differs from historical HeavyTail startup behavior.
+
+---
+
+# AdaptiveMomentsState active alpha behavior
+
+For an initialized state:
+
+```text
+alpha = 0
+```
+
+must freeze the complete state exactly.
+
+No retained field changes.
+
+For:
+
+```text
+alpha = 1
+```
+
+the state becomes the current singleton exactly:
+
+```text
+mean = input
+m2 = 0
+m3 = 0
+m4 = 0
+weightSquareSum = 1
+```
+
+Values below zero clamp to zero.
+
+Values above one clamp to one.
+
+---
+
+# AdaptiveMomentsState missing-data behavior
+
+Missing input or missing alpha preserves the complete retained state.
+
+No partial update is allowed.
+
+In Python, missing means:
+
+```text
+None
+NaN
+```
+
+as supported by established repository conventions.
+
+In Pine, missing means:
+
+```text
+na
+```
+
+---
+
+# AdaptiveMomentsState reset
+
+`reset()` clears the statistical population before any subsequent current
+observation is processed.
+
+Reset representation:
+
+```text
+mean = NaN / na
+m2 = 0
+m3 = 0
+m4 = 0
+weightSquareSum = 1
+```
+
+A reset followed by a valid observation creates a new singleton.
+
+This remains true when:
+
+```text
+alpha = 0
+```
+
+Reset plus missing required current input remains empty.
+
+---
+
+# AdaptiveMomentsState central-moment recurrence
+
+For an initialized state and:
+
+```text
+0 < alpha < 1
+```
+
+snapshot the complete old state before mutation.
+
+Let:
+
+```text
+a = alpha
+b = 1 - a
+
+delta =
+    input - oldMean
+
+delta2 =
+    delta * delta
+
+delta3 =
+    delta2 * delta
+
+delta4 =
+    delta2 * delta2
+```
+
+Then update:
+
+```text
+mean' =
+    oldMean
+    + a * delta
+```
+
+Second central moment:
+
+```text
+m2' =
+    b * oldM2
+    + a * b * delta2
+```
+
+Third central moment:
+
+```text
+m3' =
+    b * oldM3
+    - 3 * a * b * delta * oldM2
+    + a * b * (b - a) * delta3
+```
+
+Fourth central moment:
+
+```text
+m4' =
+    b * oldM4
+    - 4 * a * b * delta * oldM3
+    + 6 * a * a * b * delta2 * oldM2
+    + a * b * (1 - 3 * a * b) * delta4
+```
+
+Weight concentration:
+
+```text
+weightSquareSum' =
+    b * b * oldWeightSquareSum
+    + a * a
+```
+
+Every right-hand-side moment must use the saved old state.
+
+Do not use newly updated lower moments in higher-moment equations.
+
+The accepted HeavyTail central-moment recurrence is the migration oracle for:
+
+```text
+mean
+m2
+m3
+m4
+```
+
+once the two states have been initialized consistently.
+
+---
+
+# AdaptiveMomentsState weight concentration
+
+`weightSquareSum` is:
+
+```text
+sum_i w_i^2
+```
+
+for the current normalized recursive observation weights.
+
+Its recursion is:
+
+```text
+S2_new =
+    (1-alpha)^2 * S2_old
+    + alpha^2
+```
+
+For constant alpha in a continuing stationary recursion:
+
+```text
+S2
+    -> alpha / (2 - alpha)
+```
+
+and therefore:
+
+```text
+Neff
+    -> (2 - alpha) / alpha
+```
+
+---
+
+# AdaptiveMomentsState empty-state interpretation
+
+The reset / empty storage representation is an implementation sentinel, not a
+statistical population.
+
+The empty state is identified by:
+
+```text
+mean = NaN
+```
+
+or, in Pine:
+
+```text
+mean = na
+```
+
+Other retained fields contain neutral reset placeholders:
+
+```text
+m2 = 0
+m3 = 0
+m4 = 0
+weightSquareSum = 1
+```
+
+These placeholder values must not be interpreted as statistics of an empty
+population.
+
+Therefore, while the state is empty, all derived statistical views are
+undefined.
+
+They must return:
+
+```text
+NaN
+```
+
+in Python or:
+
+```text
+na
+```
+
+in Pine.
+
+This applies to:
+
+```text
+variance
+correctionDenominator
+correctedVariance
+sigma
+correctedSigma
+skewness
+kurtosis
+excessKurtosis
+effectiveSampleSize
+```
+
+After singleton initialization, the same stored numeric values acquire
+statistical meaning.
+
+For a valid singleton population:
+
+```text
+mean = input
+m2 = 0
+m3 = 0
+m4 = 0
+weightSquareSum = 1
+```
+
+and therefore:
+
+```text
+variance = 0
+sigma = 0
+effectiveSampleSize = 1
+correctionDenominator = 0
+```
+
+while:
+
+```text
+correctedVariance = undefined
+correctedSigma = undefined
+skewness = undefined
+kurtosis = undefined
+excessKurtosis = undefined
+```
+
+The implementation must distinguish an empty-state placeholder from a valid
+singleton population through initialization state, not merely through the
+numeric values of the retained moment fields.
+
+---
+
+# AdaptiveMomentsState derived views
+
+Initial generic derived statistics are:
+
+```text
+variance
+correctionDenominator
+correctedVariance
+
+sigma
+correctedSigma
+
+skewness
+kurtosis
+excessKurtosis
+
+effectiveSampleSize
+```
+
+No finite-sample corrections for skewness or kurtosis are part of the
+foundational contract.
+
+---
+
+# AdaptiveMomentsState variance
+
+Raw population variance:
+
+```text
+variance =
+    m2
+```
+
+when initialized.
+
+While empty:
+
+```text
+variance =
+    undefined
+```
+
+For a singleton:
+
+```text
+variance =
+    0
+```
+
+---
+
+# AdaptiveMomentsState finite-weight correction
+
+Correction denominator:
+
+```text
+correctionDenominator =
+    1 - weightSquareSum
+```
+
+when initialized.
+
+While empty:
+
+```text
+correctionDenominator =
+    undefined
+```
+
+Corrected variance:
+
+```text
+correctedVariance =
+    m2
+    / (1 - weightSquareSum)
+```
+
+only when:
+
+```text
+correctionDenominator > 0
+```
+
+Otherwise it is undefined.
+
+For a singleton:
+
+```text
+correctionDenominator = 0
+correctedVariance = undefined
+```
+
+---
+
+# AdaptiveMomentsState sigma
+
+Raw sigma:
+
+```text
+sigma =
+    sqrt(m2)
+```
+
+only when the state is initialized and:
+
+```text
+m2 >= 0
+```
+
+While empty, sigma is undefined.
+
+If numerical state contains:
+
+```text
+m2 < 0
+```
+
+generic `AdaptiveMomentsState` must not silently clamp it.
+
+Return undefined instead.
+
+Do not introduce an epsilon or tolerance policy without an explicit separate
+decision.
+
+Historical HeavyTail behavior using:
+
+```text
+sqrt(max(m2, 0))
+```
+
+remains model-specific and must not automatically propagate into the generic
+state.
+
+Corrected sigma is:
+
+```text
+correctedSigma =
+    sqrt(correctedVariance)
+```
+
+only when corrected variance is defined and non-negative.
+
+---
+
+# AdaptiveMomentsState skewness
+
+Raw moment skewness:
+
+```text
+skewness =
+    m3
+    / m2^(3/2)
+```
+
+only when:
+
+```text
+m2 > 0
+```
+
+Otherwise it is undefined.
+
+No finite-sample skewness correction is part of the foundational state.
+
+---
+
+# AdaptiveMomentsState kurtosis
+
+Pearson moment kurtosis:
+
+```text
+kurtosis =
+    m4
+    / m2^2
+```
+
+only when:
+
+```text
+m2 > 0
+```
+
+Otherwise it is undefined.
+
+Excess kurtosis:
+
+```text
+excessKurtosis =
+    kurtosis - 3
+```
+
+only when kurtosis is defined.
+
+No finite-sample kurtosis correction is part of the foundational state.
+
+A zero-variance singleton therefore has undefined generic kurtosis.
+
+Historical HeavyTail fallback behavior such as:
+
+```text
+kurtosis = 3
+```
+
+at zero variance is model-specific and must not be copied into
+`AdaptiveMomentsState`.
+
+---
+
+# AdaptiveMomentsState effective sample size
+
+Effective sample size:
+
+```text
+effectiveSampleSize =
+    1 / weightSquareSum
+```
+
+when initialized and:
+
+```text
+weightSquareSum > 0
+```
+
+While empty it is undefined.
+
+For a singleton:
+
+```text
+effectiveSampleSize = 1
+```
+
+---
+
+# AdaptiveMomentsState maturity policy
+
+The foundational state must not contain:
+
+```text
+warmup counters
+minimum bars
+minimum Neff
+startup suppression
+maturity thresholds
+trading readiness
+signal gating
+```
+
+A higher-level model or application may decide that a statistical estimate is
+not yet mature enough to use.
+
+That decision must not alter the mathematical population represented by the
+state.
+
+---
+
+# AdaptiveMomentsState Python validation
+
+The accepted Python reference is:
+
+```text
+Python/src/adaptive_moments.py
+```
+
+Permanent tests are:
+
+```text
+Python/tests/test_adaptive_moments.py
+```
+
+The Python implementation must validate:
+
+```text
+empty-state semantics
+singleton initialization
+empty alpha-zero initialization
+active alpha-zero freeze
+alpha-one replacement
+alpha clamping
+missing-data preservation
+reset behavior
+reset plus alpha-zero singleton creation
+
+HeavyTail recurrence identity
+fixed alpha
+variable alpha
+boundary alpha behavior
+
+explicit normalized recursive weights
+translation invariance
+reflection symmetry
+scale transformation
+constant sequence behavior
+
+weightSquareSum recursion
+constant-alpha asymptotic Neff
+
+variance
+corrected variance
+sigma
+corrected sigma
+skewness
+kurtosis
+excess kurtosis
+effective sample size
+```
+
+The accepted Python baseline after introduction of `AdaptiveMomentsState` is:
+
+```text
+189 passed
+```
+
+unless later intentionally expanded.
+
+---
+
+# HeavyTail migration policy
+
+Pre-migration HeavyTail behavior served as the validation oracle during
+generic-moment migration.
+
+The migration is complete and validated. `HeavyTailState` now embeds one
+`AdaptiveMomentsState` and delegates generic central-moment population mechanics
+to it. Historical HeavyTail behavior remains preserved except for the explicitly
+accepted pre-release structural field-path change from direct `mean` / `m2` /
+`m3` / `m4` fields to fields under `moments`.
+
+Completed migration sequence:
+
+```text
+1. validate Python AdaptiveMomentsState
+2. validate Pine AdaptiveMomentsState
+3. prove Pine mean/m2/m3/m4 identity against HeavyTail
+4. validate weightSquareSum independently
+5. validate derived generic views
+6. close generic moment state
+7. refactor HeavyTail onto generic moments
+8. prove HeavyTail outputs remain unchanged except explicitly approved startup cleanup
+```
+
+HeavyTail retains ownership of model-specific state beyond generic central
+moments.
+
+Examples include:
+
+```text
+absInnovation
+sigma
+tScale
+absInnovationScale
+df
+kurtosis interpretation
+```
+
+These must not be transferred wholesale into `AdaptiveMomentsState`.
+
+`absInnovation` is not an ordinary central moment.
+
+It remains outside the generic moment backbone.
+
+---
+
+# Known HeavyTail startup difference
+
+Historical HeavyTail behavior:
+
+```text
+empty state
++ valid input
++ alpha = 0
+-> remains empty
+```
+
+Generic AdaptiveMoments behavior:
+
+```text
+empty state
++ valid input
++ alpha = 0
+-> singleton population
+```
+
+This difference is intentional during parity testing.
+
+Do not assert HeavyTail identity for this startup case.
+
+Once both states have been initialized consistently, identity is required for:
+
+```text
+mean
+m2
+m3
+m4
+```
+
+under equivalent valid updates.
+
+Historical HeavyTail empty-plus-alpha-zero behavior remains preserved after the
+completed migration. Harmonizing it with the generic population contract is a
+separate deferred policy decision.
+
+---
+
+# Pine AdaptiveMoments integration policy
+
+Pine `AdaptiveMomentsState` exposes the state object and state methods only.
+
+Current public type:
+
+```text
+AdaptiveMomentsState
+```
+
+Current public methods:
+
+```text
+reset()
+update()
+
+variance()
+correctionDenominator()
+correctedVariance()
+
+sigma()
+correctedSigma()
+
+skewness()
+kurtosis()
+excessKurtosis()
+
+effectiveSampleSize()
+```
+
+A public functional remains intentionally deferred:
+
+```text
+adaptiveMoments(...)
+```
+
+It is not required for component closure and must not be added until its tuple
+shape, output order, and missing-call output policy are explicitly designed and
+accepted.
+
+---
+
+# Pine validation policy
+
+TradingView is the Pine compiler/runtime oracle.
+
+Do not intentionally use destructive crash paths in production validation when
+the same semantics can be tested deterministically elsewhere.
+
+Temporary positive deterministic Pine harnesses are allowed.
+
+Temporary harnesses must:
+
+```text
+use deterministic constants
+test exact intended semantics
+produce explicit failure diagnostics
+be removed after successful validation
+```
+
+For AdaptiveMoments, Pine validation should cover:
+
+```text
+empty state
+singleton initialization
+empty alpha-zero initialization
+active alpha-zero freeze
+alpha-one singleton replacement
+missing preservation
+reset-before-current behavior
+
+HeavyTail mean/m2/m3/m4 parity
+
+weightSquareSum independent recursion
+
+variance
+correction denominator
+corrected variance
+sigma
+corrected sigma
+skewness
+kurtosis
+excess kurtosis
+effective sample size
+```
+
+A useful deterministic derived-view anchor is:
+
+```text
+observations:
+    0
+    2
+
+alpha:
+    0.5
+    0.5
+```
+
+Expected initialized state after the second observation:
+
+```text
+mean = 1
+m2 = 1
+m3 = 0
+m4 = 1
+weightSquareSum = 0.5
+```
+
+Expected derived views:
+
+```text
+variance = 1
+correctionDenominator = 0.5
+correctedVariance = 2
+
+sigma = 1
+correctedSigma = sqrt(2)
+
+skewness = 0
+kurtosis = 1
+excessKurtosis = -2
+
+effectiveSampleSize = 2
+```
+
+After successful TradingView validation, remove the temporary harness.
+
+Do not retain disposable validation code in the production library.
+
+---
+
+# Public functional interfaces
+
+Functional wrappers and persistent state methods are distinct layers.
+
+A functional wrapper may choose current-call output gating that differs from
+the retained-state preservation semantics.
+
+Do not infer a new wrapper API solely from the existence of a state type.
+
+Before creating a new functional interface, explicitly decide:
+
+```text
+return shape
+return ordering
+raw vs corrected statistics
+missing-call output behavior
+reset behavior
+public documentation
+```
+
+Avoid prematurely freezing unnecessary public tuple contracts.
+
+---
+
+# Numerical policy
+
+Do not silently introduce estimator tolerances, clipping rules, epsilon
+thresholds, finite-sample corrections, or defensive transformations merely
+because they appear numerically convenient.
+
+Distinguish:
+
+```text
+mathematical state semantics
+model-specific defensive policy
+validation tolerance
+application-level gating
+```
+
+Validation tolerances may be used when comparing floating-point results.
+
+A validation comparison tolerance must not alter estimator state or become an
+undocumented estimator parameter.
+
+---
+
+# Python workflow
+
+Python is the primary local reference environment for mathematical validation.
+
+Typical validation sequence:
+
+```text
+python -m py_compile <source>
+python -m py_compile <test>
+
+python -m pytest -q <targeted-test>
+python -m pytest -q
+```
+
+Do not add dependencies unless explicitly required and approved.
+
+Prefer deterministic tests over stochastic tests when exact identities are
+available.
+
+Experiments may be used for statistical behavior that cannot be fully captured
+by deterministic unit tests.
+
+---
+
+# Pine workflow
+
+Pine edits occur in:
+
+```text
+PineScript/onlineRecursion.pine
+```
+
+TradingView compilation and runtime behavior are authoritative.
+
+When porting an already accepted Python state:
+
+```text
+1. preserve semantics exactly
+2. follow Pine naming conventions
+3. keep implementation mechanically close to accepted recurrence
+4. compile in TradingView
+5. run deterministic validation
+6. remove temporary harness
+7. only then proceed to dependent refactors
+```
+
+Do not combine unrelated Pine migrations in one validation step.
+
+---
+
+# Codex workflow
+
+Codex CLI may be used for repository inspection, Python implementation,
+mechanical refactors, test execution, and Pine source editing.
+
+For statistically sensitive work:
+
+```text
+use GPT-5.6 Sol
+use default mode unless latency is the primary concern
+```
+
+The chat remains responsible for:
+
+```text
+architecture
+mathematical semantics
+experiment design
+audit
+acceptance decisions
+```
+
+Codex is especially useful for:
+
+```text
+repository inspection
+precise file edits
+test execution
+diff review
+mechanical migrations
+```
+
+For new sensitive components, prefer:
+
+```text
+inspection-only audit
+-> review
+-> narrowly authorized implementation
+-> tests
+-> diff review
+-> manual Git commit
+```
+
+---
+
+# Codex safety rules
+
+Unless explicitly authorized otherwise, Codex must not:
+
+```text
+commit
+push
+pull
+merge
+rebase
+reset
+amend
+delete branches
+force-update refs
+create tags
+modify remotes
+force checkout
+discard changes
+```
+
+For first-pass implementation work, Git writes should remain under direct user
+control.
+
+Codex may use read-only Git commands such as:
+
+```text
+git status
+git diff
+git log
+git branch --show-current
+```
+
+when allowed by the task.
+
+---
+
+# Git discipline
+
+Keep commits narrow and semantically meaningful.
+
+Do not mix:
+
+```text
+mathematical changes
+documentation cleanup
+unrelated refactors
+formatting churn
+release work
+```
+
+without a clear reason.
+
+Before commit:
+
+```text
+verify intended files
+run relevant tests
+inspect staged diff
+confirm no unrelated modifications
+```
+
+For new untracked files, remember that ordinary:
+
+```text
+git diff
+```
+
+does not show them until staged.
+
+After staging, use:
+
+```text
+git diff --cached
+git diff --cached --check
+git diff --cached --stat
+```
+
+before commit.
+
+---
+
+# Shell environment
+
+The user shell is Fish.
+
+All shell instructions must be Fish-compatible.
+
+Avoid Bash-only variable-assignment syntax.
+
+Be careful with unmatched wildcards.
+
+For example, this can fail in Fish when the directory is empty:
+
+```text
+rm -rf /tmp/example/*
+```
+
+Prefer:
+
+```text
+rm -rf /tmp/example
+mkdir -p /tmp/example
+```
+
+when full directory recreation is appropriate.
+
+---
+
+# Local environment conventions
+
+System packages should preferably be managed through Fedora RPM/DNF where
+practical.
+
+Development source trees and build projects belong under:
+
+```text
+~/Dev
+```
+
+Avoid unnecessary clutter directly under:
+
+```text
+$HOME
+```
+
+The project repository is:
+
+```text
+~/Dev/github/xel-onlineRecursion
+```
+
+---
+
+# Component closure rule
+
+Once a statistical component is accepted as mathematically closed, future work
+should build above it rather than casually revise it.
+
+Closed components currently include:
+
+```text
+adaptive quantile
+adaptiveExpectile
+adaptiveTailMean
+adaptiveHuber
+adaptive MAD / robust scale
+adaptive covariance / correlation
+recursive regression / beta
+Python and Pine AdaptiveMomentsState
+HeavyTail generic-moment migration
+```
+
+Python and Pine `AdaptiveMomentsState` are implemented, validated, and closed.
+
+HeavyTail migration onto the generic moment state is complete and validated.
+HeavyTail startup harmonization and a public functional `adaptiveMoments(...)`
+remain separate deferred policy/API decisions.
+
+---
+
+# Future generic extensions
+
+Potential future additions should reuse the generic backbone where possible.
+
+Examples:
+
+```text
+previous-state z-score
+autocorrelation via covariance machinery
+CUSUM-style monitoring
+other normalized recursive sufficient statistics
+```
+
+Do not introduce a new specialized state if an accepted generic sufficient
+statistic already represents the required population.
+
+---
+
+# Final guiding rule
+
+When uncertain about architectural ownership, ask:
+
+```text
+Is this quantity part of the statistical population,
+a derived interpretation of that population,
+a model-specific assumption,
+or an application-level decision?
+```
+
+Then place it accordingly.
+
+The repository should continue to obey:
+
+```text
+Foundational state represents the population.
+Derived statistics interpret that population.
+Models add model-specific assumptions.
+Applications decide when evidence is sufficient to act.
+```
