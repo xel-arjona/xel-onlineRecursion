@@ -1631,7 +1631,9 @@ redesign it.
 
 ## Anchor Span semantics
 
-No Anchor contributes alpha zero, causes no estimator reset, and ignores Span.
+No Anchor contributes component alpha zero, causes no estimator reset, and
+ignores Span. Demo source dispatch separately determines whether an active
+coefficient source exists.
 
 Rolling Anchor uses non-overlapping blocks of N chart observations, with
 boundaries at observation indices `0, N, 2N, 3N, ...`. The anchor observation
@@ -1728,6 +1730,50 @@ to dispersion/band calculations, and available to the lower-pane diagnostic
 system. No independent display-alpha recurrence is allowed. No duplicate
 estimator should exist only for visualization.
 
+## Demo source enablement
+
+Component-level zero identities remain unchanged. At the Demo Alpha Source
+dispatch layer, a selected source with no enabled component produces
+`sourceAlpha = na`.
+
+Demo-level enablement is defined conceptually as:
+
+```text
+recursiveEnabled = Recursive Decay Model != Bypass
+participationEnabled = Participation Model != No Participation
+anchorEnabled = Anchor Model != No Anchor
+
+anyCompositeEnabled =
+    recursiveEnabled or participationEnabled or anchorEnabled
+```
+
+Accepted dispatch policy:
+
+```text
+Alpha Source = Recursive Decay AND Recursive Decay Model = Bypass
+    -> sourceAlpha = na
+
+Alpha Source = Participation AND Participation Model = No Participation
+    -> sourceAlpha = na
+
+Alpha Source = Anchored AND Anchor Model = No Anchor
+    -> sourceAlpha = na
+
+Alpha Source = Composite AND NOT anyCompositeEnabled
+    -> sourceAlpha = na
+
+Alpha Source = Composite AND anyCompositeEnabled
+    -> sourceAlpha = raw three-leg Composite
+```
+
+Disabled legs still contribute zero inside `1 - (1-r)(1-p)(1-a)`. Enablement
+flags are Demo routing policy only; they do not change `decayAlpha()`,
+`participationAlpha()`, `anchoredAlpha()`, or `compositeAlpha()` semantics.
+
+Alpha zero remains a valid numerical coefficient and neutral Composite
+contribution. Alpha `na` here means the Demo has no active coefficient source.
+Do not reinterpret generic library alpha-zero semantics.
+
 ## Demo anchor initialization policy
 
 At the Demo/application layer:
@@ -1735,6 +1781,10 @@ At the Demo/application layer:
 ```text
 selectedAlpha = estimatorAnchorWhen ? 1.0 : sourceAlpha
 ```
+
+When `sourceAlpha` is `na` and no estimator anchor override is active,
+`selectedAlpha` remains `na`. No fallback or fabricated zero is introduced for
+display continuity. Existing estimator missing-call behavior remains unchanged.
 
 `estimatorAnchorWhen` is true only when all three conditions hold:
 
@@ -1797,11 +1847,20 @@ Only one primary diagnostic series is visibly plotted at a time. Do not
 simultaneously overlay quantities with incompatible units/scales. The selector
 is Demo-level and does not require a new exported public enum.
 
+The one primary Statistic plot uses `plot.style_columns` for all four modes.
+This Demo presentation distinguishes positive and negative Innovation around
+the implicit zero baseline; `na` remains visually absent rather than bridged.
+Do not add a zero hline, alpha-one hline, sign-based colors, or additional
+visible diagnostic plots. The style choice changes no statistical semantics.
+
 ## Selected Alpha diagnostic
 
 Selected Alpha plots the exact `selectedAlpha` supplied to the upper recursive
 estimators. This is a strict invariant: the lower pane must never display a
 different alpha while labeling it as the active/selected coefficient.
+
+When `selectedAlpha` is `na`, the Selected Alpha diagnostic has no plotted value
+for that observation/configuration. Do not fabricate zero to maintain continuity.
 
 Individual component values may remain available as secondary diagnostics,
 preferably Data Window only:
@@ -1924,9 +1983,18 @@ Elapsed Time Continuity:
 
 Anchor Model:
     Rolling means non-overlapping blocks, not a sliding window
+    No Anchor disables this component and requests no estimator reset
 
 Alpha Source:
     Composite combines enabled Recursive, Participation, and Anchor legs
+    if the selected source has no enabled component, no alpha is produced
+
+Recursive Decay Model:
+    Bypass disables this component
+    when Recursive Decay is the standalone Alpha Source, no alpha is produced
+
+Participation Model:
+    No Participation disables this component
 
 Anchor initialization:
     active anchor observations use alpha 1 for estimator initialization
