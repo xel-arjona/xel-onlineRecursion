@@ -1819,23 +1819,28 @@ They must not be confused visually with Selected Alpha.
 
 Innovation demonstrates the new evidence seen by the recursive location process
 before the current recursive update. It compares the current location input
-with the previous recursive mean, in coordinates compatible with the selected
-Return Model:
+with the prior published production location, in coordinates compatible with
+the selected Return Model:
 
 ```text
-innovation = current evidence relative to prior retained location,
-             expressed in the selected Return Model coordinates
+priorLocation = demoMean[1]
+
+innovation = relativeReturn(demoReturnModel, hlc3, priorLocation)
+
+Arithmetic:  hlc3 / priorLocation - 1
+Logarithmic: log(hlc3 / priorLocation)
 ```
 
-Do not blindly use raw `price - mean` when the selected Return Model uses
-relative/logarithmic coordinates. Use existing production return/displacement
-transformation helpers wherever possible. The implementation phase must recover
-and reuse the existing OR transform rather than invent a parallel formula.
-Do not introduce a duplicate statistical recurrence.
+Use the existing `relativeReturn()` helper and its validity contract: Arithmetic
+requires present current/reference values and a nonzero reference; Logarithmic
+requires present, strictly positive current/reference values. Do not introduce
+a parallel formula or duplicate statistical recurrence.
 
-At first initialization, explicit estimator anchor/reset, or whenever no valid
-previous population exists, Innovation should be `na` unless an already
-accepted production semantic clearly defines otherwise.
+Innovation is `na` when `estimatorAnchorWhen` is true, the prior published
+production location is unavailable, or current/reference values fail the
+existing `relativeReturn()` validity rules. An unavailable published location
+suppresses Innovation even if private IIR state was internally preserved.
+Do not cache or forward-fill prior location.
 
 ## Standardized Innovation diagnostic
 
@@ -1844,35 +1849,48 @@ Dispersion Model need not represent Gaussian sigma. This is a z-score-like
 dimensionless diagnostic.
 
 Its numerator is the Innovation defined above. Its denominator is the prior
-valid dispersion from the same retained estimator population and in compatible
-coordinates:
+published production dispersion from the same production recursion and in
+compatible coordinates:
 
 ```text
+priorDispersion = demoDevelopingDispersion[1]
+
 standardizedInnovation = innovation / priorDispersion
 ```
 
-This is defined only when Innovation is valid, priorDispersion is valid,
-priorDispersion > 0, and no estimator reset starts a new population on the
-current observation. Otherwise return `na`.
+This is defined only when `estimatorAnchorWhen` is false, Innovation is valid,
+the prior published production dispersion is valid, and priorDispersion > 0.
+Otherwise return `na`, even if private dispersion state was internally preserved.
 
 An anchor/reset observation has no prior scale belonging to the new population,
 so Standardized Innovation is `na` on that reset observation. Do not substitute
-zero, clamp the score, or add Gaussian assumptions.
+zero, clamp the score, add epsilon, or imply Gaussian normality. Do not cache or
+forward-fill prior dispersion.
 
 ## Developing Dispersion diagnostic
 
-Developing Dispersion exposes the exact developing dispersion quantity used by
-the upper band/projection construction. The diagnostic observes the production
-value already used by the Demo. Do not run a second dispersion estimator for
-the oscillator.
+Developing Dispersion exposes the exact current `demoDevelopingDispersion`
+used by the upper band/projection construction. The diagnostic observes the
+production value already used by the Demo. Do not run a second dispersion
+estimator for the oscillator.
 
 ## Diagnostic architectural rule
 
-The oscillator observes production recursion. It must not create parallel
-statistical state merely to draw diagnostics. Preferred dependencies are:
+Diagnostics observe published production recursion. Published outputs may be
+`na` on missing calls even while private estimator state is retained.
+`demoMean[1]` and `demoDevelopingDispersion[1]` are prior published production
+values, not unconditional views of hidden retained state.
+
+Diagnostics must not reconstruct private retained state, forward-fill production
+outputs, maintain a cache of last-valid estimator values, instantiate duplicate
+estimator state, or infer hidden branch-local dispersion state. This intentional
+conservative Demo observability policy does not change estimator missing-data
+semantics.
+
+Preferred dependencies are:
 
 ```text
-current evidence + prior location
+current evidence + prior published production location
     -> Innovation
 
 component alphas -> sourceAlpha -> anchor policy -> selectedAlpha
@@ -1880,12 +1898,12 @@ component alphas -> sourceAlpha -> anchor policy -> selectedAlpha
     selectedAlpha -> dispersion -> Developing Dispersion diagnostic
     selectedAlpha -> Selected Alpha diagnostic
 
-Innovation + prior dispersion from the same retained population
+Innovation + prior published production dispersion from the same recursion
     -> Standardized Innovation
 ```
 
-Diagnostics are algebraic views or observations of the same retained production
-state. Selecting a diagnostic does not change estimator state.
+Diagnostics are algebraic views or observations of the same published production
+recursion. Selecting a diagnostic does not change estimator state.
 
 ## Demo tooltips
 
@@ -1917,7 +1935,7 @@ Diagnostic Statistic:
     selects one lower-pane statistical view without changing estimator state
 
 Standardized Innovation:
-    dimensionless innovation relative to prior valid dispersion;
+    dimensionless innovation relative to prior valid published production dispersion;
     not a claim of Gaussian normality
 ```
 
