@@ -209,6 +209,88 @@ export enum DispersionModel
 
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INTERNAL ANCHOR BOUNDARIES
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Pure native-period identities. Callers supply the current processing time,
+// trading-day timestamp, or calendar year/month; no requests or session policy
+// are embedded here. Missing identities are never fabricated.
+anchorMinuteSerial(series int eventTime) =>
+    not na(eventTime) ? int(math.floor(float(eventTime) / 60000.0)) : na
+
+anchorHourSerial(series int eventTime) =>
+    not na(eventTime) ? int(math.floor(float(eventTime) / 3600000.0)) : na
+
+anchorDaySerial(series int tradingDayTime) =>
+    not na(tradingDayTime) ? int(math.floor(float(tradingDayTime) / 86400000.0)) : na
+
+anchorWeekSerial(series int tradingDayTime) =>
+    int daySerial = anchorDaySerial(tradingDayTime)
+    // UNIX day zero is Thursday; adding three days aligns weeks to Monday.
+    not na(daySerial) ? int(math.floor(float(daySerial + 3) / 7.0)) : na
+
+anchorMonthSerial(series int calendarYear, series int calendarMonth) =>
+    not na(calendarYear) and not na(calendarMonth)
+         ? calendarYear * 12 + calendarMonth - 1
+         : na
+
+
+// One call consumes one processing observation. The returned boundary applies
+// BEFORE the caller consumes that same observation in its estimator.
+// Span is fixed configuration for the lifetime of the state.
+type RollingAnchorState
+    int nextPosition = 0
+
+method boundaryWhen(
+    RollingAnchorState this,
+    simple int span
+) =>
+    if not na(span) and span <= 0
+        runtime.error("Anchor span must be greater than zero.")
+
+    bool boundary = false
+    if not na(span)
+        boundary := this.nextPosition == 0
+        this.nextPosition := (this.nextPosition + 1) % span
+    boundary
+
+
+// Observed mode retains a native serial and its zero-based observed ordinal.
+// Elapsed mode retains floor(nativeSerial / span); observedOrdinal stays zero.
+// Use an independent state per clock with fixed span and continuity policy.
+// A first valid identity initializes without an anchor. Missing identity/span
+// preserves every field and returns false. No missing periods are synthesized.
+type PeriodAnchorState
+    int lastIdentity = na
+    int observedOrdinal = 0
+
+method boundaryWhen(
+    PeriodAnchorState this,
+    series int nativeSerial,
+    simple int span,
+    simple bool elapsedTime
+) =>
+    if not na(span) and span <= 0
+        runtime.error("Anchor span must be greater than zero.")
+
+    bool boundary = false
+    if not na(nativeSerial) and not na(span)
+        int identity = elapsedTime
+             ? int(math.floor(float(nativeSerial) / float(span)))
+             : nativeSerial
+        if na(this.lastIdentity)
+            this.lastIdentity := identity
+        else if identity != this.lastIdentity
+            if elapsedTime
+                boundary := true
+            else
+                this.observedOrdinal += 1
+                boundary := this.observedOrdinal % span == 0
+            this.lastIdentity := identity
+    boundary
+
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PUBLIC STREAMING STATE TYPES
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
