@@ -1593,6 +1593,353 @@ Avoid prematurely freezing unnecessary public tuple contracts.
 
 ---
 
+# /1 Alpha / Anchor / Demo architecture
+
+The following decisions are accepted for the final TradingView /1 Alpha /
+Anchor / Demo architecture phase. They define the implementation contract;
+recording them does not assert that the Demo implementation is complete.
+
+## Anchor Model
+
+Anchor Model is a Demo-level selector, not a new exported exchange/calendar
+enum. Its options are:
+
+```text
+No Anchor
+Rolling Anchor
+Minute Anchor
+Hour Anchor
+Daily Anchor
+Weekly Anchor
+Monthly Anchor
+```
+
+Existing public generic boundary seams remain primary:
+
+```text
+anchoredAlpha(contribution, boundaryWhen)
+iir1pole(..., resetWhen = boundaryWhen)
+marketDispersion(..., anchorWhen = boundaryWhen)
+```
+
+A future external time-policy library may supply arbitrary series-bool boundary
+events through these interfaces. Exchange/session-specific clocks remain
+explicitly deferred.
+
+`anchoredAlpha()` retains its existing volume-normalized semantics. Do not
+redesign it.
+
+## Anchor Span semantics
+
+No Anchor contributes alpha zero, causes no estimator reset, and ignores Span.
+
+Rolling Anchor uses non-overlapping blocks of N chart observations, with
+boundaries at observation indices `0, N, 2N, 3N, ...`. The anchor observation
+is the first observation of the new population. Span = 1 anchors every
+observation. Elapsed Time Continuity has no effect on Rolling Anchor.
+
+For Minute / Hour / Day / Week / Month Anchor, Span = N native periods.
+Day, Week, and Month refer to the Daily, Weekly, and Monthly selector options.
+
+With Elapsed Time Continuity OFF, count observed native periods. The first
+encountered native period has ordinal 0. Each newly observed native period
+increments the ordinal once. Missing/unobserved periods do not increment it;
+repeated processing observations inside the same native period do not increment
+it. Anchor when entering ordinal `N, 2N, 3N, ...`.
+
+With Elapsed Time Continuity ON, use absolute aligned clock/calendar bucket
+identities. Anchor whenever the retained bucket identity changes. If time jumps
+across one or more empty buckets, perform one reset before the next available
+processing observation. Do not synthesize missing observations.
+
+Preserve the existing serial/alignment conventions:
+
+```text
+Minute: absolute minute serial
+Hour:   absolute hour serial
+Day:    trading-day serial
+Week:   Monday-aligned week serial
+Month:  year * 12 + month - 1
+```
+
+## Discrete observation limitation
+
+onlineRecursion does not split or synthesize estimator observations when an
+internal time boundary occurs inside one chart bar. A reset applies at the first
+available processing observation that can begin the new population. Intrabar
+estimator splitting is outside /1 scope.
+
+## Elapsed Time Continuity
+
+Elapsed Time Continuity is a shared temporal-geometry control for time-based
+Participation models and time-based Anchor models:
+
+```text
+OFF: observed-period continuity
+ON:  absolute clock/calendar continuity
+```
+
+It does not alter Recursive Decay, No Anchor, Rolling Anchor, Equal
+Participation, Rolling Volume, Open-Interest Turnover, Float Turnover, Fund
+Turnover, or other non-time Participation models.
+
+Participation settlement timing and Anchor reset timing remain distinct even
+when they share serial/bucket arithmetic.
+
+## Composite Alpha
+
+Composite becomes three-component using the existing complementary-retention
+algebra. Do not introduce a new combining rule.
+
+```text
+compositeAlpha(
+    compositeAlpha(recursiveAlpha, participationAlpha),
+    anchorAlpha
+)
+
+Equivalent: 1 - (1-r)(1-p)(1-a)
+```
+
+Neutral component values are:
+
+```text
+Recursive Decay Model = Bypass           -> 0
+Participation Model   = No Participation -> 0
+Anchor Model          = No Anchor        -> 0
+```
+
+Each disabled component is an identity element. Missing-input propagation of
+`compositeAlpha()` itself remains unchanged. Do not hide anchor initialization
+policy inside `compositeAlpha()`.
+
+## Canonical Demo alpha routing
+
+The Demo must produce one canonical estimator coefficient, `selectedAlpha`:
+
+```text
+component alphas
+    -> sourceAlpha
+    -> anchor initialization policy
+    -> selectedAlpha
+```
+
+The exact same `selectedAlpha` must be supplied to the recursive mean, supplied
+to dispersion/band calculations, and available to the lower-pane diagnostic
+system. No independent display-alpha recurrence is allowed. No duplicate
+estimator should exist only for visualization.
+
+## Demo anchor initialization policy
+
+At the Demo/application layer:
+
+```text
+selectedAlpha = estimatorAnchorWhen ? 1.0 : sourceAlpha
+```
+
+`estimatorAnchorWhen` is true only when all three conditions hold:
+
+```text
+Anchor Model is enabled
+AND Alpha Source is Anchored or Composite
+AND the selected Anchor boundary occurs
+```
+
+This makes the new population's current valid price observation full-weight at
+an active estimator reset. It resolves the Demo edge case where dispersion can
+force alpha = 1 at an anchor while the outer recursive mean can receive `na`.
+
+This is an application/Demo policy. It does not change `anchoredAlpha()`,
+`compositeAlpha()`, generic missing-data behavior outside anchor events,
+AdaptiveMoments, HeavyTail, covariance, quantile, expectile, tail mean, Huber,
+or regression.
+
+## Demo input organization
+
+Target logical groups:
+
+```text
+GENERAL
+    Return Model
+    Span
+    Elapsed Time Continuity
+
+DISPERSION
+    Dispersion Model
+
+ALPHA
+    Alpha Source
+    Recursive Decay Model
+    Participation Model
+    Anchor Model
+
+DIAGNOSTIC
+    Statistic
+```
+
+Span is one common positive Demo horizon N; its physical/statistical units
+remain model-dependent. Dispersion Model changes band/dispersion behavior.
+Alpha Source determines the coefficient-generation policy.
+
+## Lower-pane Diagnostic Statistic
+
+The lower pane must not be reduced permanently to Selected Alpha only. It is a
+selectable statistical demonstration/diagnostic. The Demo-level Statistic
+selector contains exactly four primary modes:
+
+```text
+Selected Alpha
+Innovation
+Standardized Innovation
+Developing Dispersion
+```
+
+Only one primary diagnostic series is visibly plotted at a time. Do not
+simultaneously overlay quantities with incompatible units/scales. The selector
+is Demo-level and does not require a new exported public enum.
+
+## Selected Alpha diagnostic
+
+Selected Alpha plots the exact `selectedAlpha` supplied to the upper recursive
+estimators. This is a strict invariant: the lower pane must never display a
+different alpha while labeling it as the active/selected coefficient.
+
+Individual component values may remain available as secondary diagnostics,
+preferably Data Window only:
+
+```text
+Recursive Alpha
+Participation Alpha
+Anchor Alpha
+Raw Composite Alpha
+```
+
+They must not be confused visually with Selected Alpha.
+
+## Innovation diagnostic
+
+Innovation demonstrates the new evidence seen by the recursive location process
+before the current recursive update. It compares the current location input
+with the previous recursive mean, in coordinates compatible with the selected
+Return Model:
+
+```text
+innovation = current evidence relative to prior retained location,
+             expressed in the selected Return Model coordinates
+```
+
+Do not blindly use raw `price - mean` when the selected Return Model uses
+relative/logarithmic coordinates. Use existing production return/displacement
+transformation helpers wherever possible. The implementation phase must recover
+and reuse the existing OR transform rather than invent a parallel formula.
+Do not introduce a duplicate statistical recurrence.
+
+At first initialization, explicit estimator anchor/reset, or whenever no valid
+previous population exists, Innovation should be `na` unless an already
+accepted production semantic clearly defines otherwise.
+
+## Standardized Innovation diagnostic
+
+The name is Standardized Innovation. Do not call it a generic "Z-Score":
+Dispersion Model need not represent Gaussian sigma. This is a z-score-like
+dimensionless diagnostic.
+
+Its numerator is the Innovation defined above. Its denominator is the prior
+valid dispersion from the same retained estimator population and in compatible
+coordinates:
+
+```text
+standardizedInnovation = innovation / priorDispersion
+```
+
+This is defined only when Innovation is valid, priorDispersion is valid,
+priorDispersion > 0, and no estimator reset starts a new population on the
+current observation. Otherwise return `na`.
+
+An anchor/reset observation has no prior scale belonging to the new population,
+so Standardized Innovation is `na` on that reset observation. Do not substitute
+zero, clamp the score, or add Gaussian assumptions.
+
+## Developing Dispersion diagnostic
+
+Developing Dispersion exposes the exact developing dispersion quantity used by
+the upper band/projection construction. The diagnostic observes the production
+value already used by the Demo. Do not run a second dispersion estimator for
+the oscillator.
+
+## Diagnostic architectural rule
+
+The oscillator observes production recursion. It must not create parallel
+statistical state merely to draw diagnostics. Preferred dependencies are:
+
+```text
+current evidence + prior location
+    -> Innovation
+
+component alphas -> sourceAlpha -> anchor policy -> selectedAlpha
+    selectedAlpha -> recursive location
+    selectedAlpha -> dispersion -> Developing Dispersion diagnostic
+    selectedAlpha -> Selected Alpha diagnostic
+
+Innovation + prior dispersion from the same retained population
+    -> Standardized Innovation
+```
+
+Diagnostics are algebraic views or observations of the same retained production
+state. Selecting a diagnostic does not change estimator state.
+
+## Demo tooltips
+
+Tooltips are required for Return Model, Span, Elapsed Time Continuity,
+Dispersion Model, Alpha Source, Recursive Decay Model, Participation Model,
+Anchor Model, and Diagnostic Statistic. They must describe actual semantics
+rather than marketing prose.
+
+They must explicitly communicate:
+
+```text
+Span:
+    common positive horizon N; units depend on active model
+
+Elapsed Time Continuity:
+    OFF counts observed periods
+    ON retains absolute clock/calendar continuity including gaps
+
+Anchor Model:
+    Rolling means non-overlapping blocks, not a sliding window
+
+Alpha Source:
+    Composite combines enabled Recursive, Participation, and Anchor legs
+
+Anchor initialization:
+    active anchor observations use alpha 1 for estimator initialization
+
+Diagnostic Statistic:
+    selects one lower-pane statistical view without changing estimator state
+
+Standardized Innovation:
+    dimensionless innovation relative to prior valid dispersion;
+    not a claim of Gaussian normality
+```
+
+## Future external time-policy library
+
+Do not create exchange/session-specific enums in onlineRecursion /1. Do not add
+New York open/close policies, CME session policies, London policies, Asia
+policies, holiday calendars, or exchange calendars.
+
+A future external time-policy library can emit series-bool boundary events into
+the existing generic OR boundary/reset seams listed under Anchor Model. The
+built-in Minute/Hour/Day/Week/Month Demo policies are sufficient for /1.
+
+## Closed statistical components during /1 Demo work
+
+Do not reopen or modify any closed statistical component absent a genuine
+contradiction required by this contract. In particular, do not change
+AdaptiveMoments, HeavyTail, AdaptiveCovariance, AdaptiveQuantile,
+AdaptiveExpectile, AdaptiveTailMean, AdaptiveHuber, or regression/beta.
+
+---
+
 # Numerical policy
 
 Do not silently introduce estimator tolerances, clipping rules, epsilon
