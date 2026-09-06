@@ -6590,6 +6590,21 @@ ParticipationModel demoParticipationModel = input.enum(
     group = "Library Demonstration"
 )
 
+string demoAnchorModel = input.string(
+    "Rolling Anchor",
+    "Anchor Model",
+    options = [
+        "No Anchor",
+        "Rolling Anchor",
+        "Minute Anchor",
+        "Hour Anchor",
+        "Daily Anchor",
+        "Weekly Anchor",
+        "Monthly Anchor"
+    ],
+    group = "Library Demonstration"
+)
+
 int demoSpan = input.int(
     20,
     "Span",
@@ -6608,12 +6623,29 @@ bool demoElapsedTime = input.bool(
 // RECURSIVE COEFFICIENT CONSTRUCTION
 // -----------------------------------------------------------------------------
 
-// Generic N-chart-observation boundary used by the demonstration.
-//
-// This is not itself part of the library API. It simply provides a common
-// population/settlement boundary derived from the single demo Span input.
-bool demoSpanBoundary =
-     bar_index % demoSpan == 0
+// Current observation identities belong to the estimator population, not a
+// delayed Participation settlement. Each input selection fixes one clock.
+bool demoAnchorEnabled = demoAnchorModel != "No Anchor"
+
+int demoAnchorNativeSerial = switch demoAnchorModel
+    "Minute Anchor" => anchorMinuteSerial(time)
+    "Hour Anchor" => anchorHourSerial(time)
+    "Daily Anchor" => anchorDaySerial(time_tradingday)
+    "Weekly Anchor" => anchorWeekSerial(time_tradingday)
+    "Monthly Anchor" => anchorMonthSerial(year, month)
+    => na
+
+var RollingAnchorState demoRollingAnchor = RollingAnchorState.new()
+var PeriodAnchorState demoPeriodAnchor = PeriodAnchorState.new()
+
+bool demoAnchorBoundary = switch demoAnchorModel
+    "No Anchor" => false
+    "Rolling Anchor" => demoRollingAnchor.boundaryWhen(demoSpan)
+    => demoPeriodAnchor.boundaryWhen(
+        demoAnchorNativeSerial,
+        demoSpan,
+        demoElapsedTime
+    )
 
 
 // Fixed recursive-decay contribution.
@@ -6632,24 +6664,21 @@ float demoParticipationAlpha = participationAlpha(
 )
 
 
-// Anchored volume-normalized contribution.
-//
-// The same Span boundary defines the contribution population.
-float demoAnchoredAlpha = anchoredAlpha(
-    volume,
-    demoSpanBoundary
-)
+// Enabled anchors retain volume normalization; No Anchor is a zero identity leg.
+float rawAnchorAlpha = demoAnchorEnabled
+     ? anchoredAlpha(volume, demoAnchorBoundary)
+     : 0.0
 
 
-// Composite recursive contribution.
+// Three complementary-retention contributions.
 float demoCompositeAlpha = compositeAlpha(
-    demoDecayAlpha,
-    demoParticipationAlpha
+    compositeAlpha(demoDecayAlpha, demoParticipationAlpha),
+    rawAnchorAlpha
 )
 
 
 // Select the coefficient family used by the price-space demonstration.
-float demoAlpha = switch demoAlphaSource
+float sourceAlpha = switch demoAlphaSource
 
     "Recursive Decay" =>
         demoDecayAlpha
@@ -6658,7 +6687,7 @@ float demoAlpha = switch demoAlphaSource
         demoParticipationAlpha
 
     "Anchored" =>
-        demoAnchoredAlpha
+        rawAnchorAlpha
 
     "Composite" =>
         demoCompositeAlpha
@@ -6667,14 +6696,14 @@ float demoAlpha = switch demoAlphaSource
         na
 
 
-// Only the explicitly anchored coefficient model owns an estimator-population
-// reset in this demonstration.
-//
-// The same boundary is shared by coefficient normalization and estimator state
-// so both describe the same recursive population.
-bool demoAnchorWhen =
-     demoAlphaSource == "Anchored"
-     and demoSpanBoundary
+// Only Anchored and Composite sources allow the enabled Anchor Model to reset
+// estimator populations. Both estimators consume the same initialization alpha.
+bool estimatorAnchorWhen =
+     demoAnchorEnabled
+     and (demoAlphaSource == "Anchored" or demoAlphaSource == "Composite")
+     and demoAnchorBoundary
+
+float selectedAlpha = estimatorAnchorWhen ? 1.0 : sourceAlpha
 
 
 // -----------------------------------------------------------------------------
@@ -6689,8 +6718,8 @@ bool demoAnchorWhen =
 float demoMean = iir1pole(
     open,
     hlc3,
-    demoAlpha,
-    resetWhen = demoAnchorWhen
+    selectedAlpha,
+    resetWhen = estimatorAnchorWhen
 )
 
 
@@ -6698,13 +6727,13 @@ float demoMean = iir1pole(
 float demoDevelopingDispersion = marketDispersion(
     demoDispersionModel,
     demoReturnModel,
-    demoAlpha,
+    selectedAlpha,
     close,
     high,
     low,
     hlc3,
     open,
-    anchorWhen = demoAnchorWhen
+    anchorWhen = estimatorAnchorWhen
 )
 
 
@@ -6768,7 +6797,7 @@ plot(
 )
 
 plot(
-    demoAnchoredAlpha,
+    rawAnchorAlpha,
     "Anchored Alpha",
     color = color.green
 )
