@@ -4,7 +4,7 @@
 //@version=6
 
 //@description
-// XeL onlineRecursion
+// XeL OnlineRecursion
 //
 // A collection of online or streaming tools designed primarily around
 // O(1) per-observation update equations for filtering, statistical
