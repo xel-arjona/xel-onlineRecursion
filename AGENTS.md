@@ -1862,17 +1862,17 @@ different alpha while labeling it as the active/selected coefficient.
 When `selectedAlpha` is `na`, the Selected Alpha diagnostic has no plotted value
 for that observation/configuration. Do not fabricate zero to maintain continuity.
 
-Individual component values may remain available as secondary diagnostics,
-preferably Data Window only:
+The /1 Demo exposes exactly four plot objects:
 
-```text
-Recursive Alpha
-Participation Alpha
-Anchor Alpha
-Raw Composite Alpha
-```
+Upper Dispersion
+Recursive Mean
+Lower Dispersion
+Statistic
 
-They must not be confused visually with Selected Alpha.
+Statistic is the only lower-pane diagnostic plot.
+
+Recursive, Participation, Anchor, and raw Composite alpha values remain internal
+Demo routing quantities and are not exposed as separate plot objects.
 
 ## Innovation diagnostic
 

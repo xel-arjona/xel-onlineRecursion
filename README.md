@@ -398,8 +398,8 @@ cache or forward-fill missing outputs. Standardized Innovation is dimensionless
 and makes no Gaussian-normality claim.
 
 One visible Statistic is shown at a time using columns; unavailable values
-remain absent. Recursive Alpha, Participation Alpha, Anchor Alpha, and Raw
-Composite Alpha remain available in the Data Window.
+remain absent. The Demo does not expose the individual Recursive, Participation,
+Anchor, or raw Composite alpha legs as separate plot objects.
 
 ---
 
