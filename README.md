@@ -149,11 +149,12 @@ semantics rather than implementation details.
 
 ## Statistical backbone
 
-The project is being organized around generic retained statistical state.
+The statistical backbone uses generic retained population state.
 
 ### Generic univariate moments
 
-The intended generic moment backbone is:
+`AdaptiveMomentsState` is implemented, validated, and closed in Python and Pine.
+It retains the generic univariate population moments and weight concentration:
 
 ```text
 AdaptiveMomentsState
@@ -164,7 +165,7 @@ AdaptiveMomentsState
     weightSquareSum
 ```
 
-From that state, generic derived statistics may include:
+Algebraic views of that state provide:
 
 ```text
 variance
@@ -181,8 +182,8 @@ excess kurtosis
 effective sample size
 ```
 
-Higher-level distribution interpretations should be built above this generic
-moment state.
+Model interpretations sit above this generic state. `HeavyTailState` embeds
+`AdaptiveMomentsState` and adds its model-specific quantities.
 
 ### Generic bivariate moments
 
@@ -345,6 +346,60 @@ XeL OnlineRecursion currently includes:
 - additive moment scaling
 - realized-return distributions
 - recursive market dispersion
+
+---
+
+## /1 Pine Demo
+
+The Demo offers four Alpha Sources: Recursive Decay, Participation, Anchored,
+and Composite. Composite combines enabled Recursive, Participation, and Anchor
+legs using complementary retention: `1 - (1-r)(1-p)(1-a)`.
+
+Bypass, No Participation, and No Anchor disable their respective components;
+disabled legs contribute zero internally to Composite. A disabled standalone
+source, or Composite with all three components disabled, produces no alpha
+(`na`). The Demo does not fabricate alpha zero for an unavailable source.
+
+Anchor Model offers exactly:
+
+- No Anchor
+- Rolling Anchor
+- Minute Anchor
+- Hour Anchor
+- Daily Anchor
+- Weekly Anchor
+- Monthly Anchor
+
+Rolling Anchor uses non-overlapping blocks of Span chart observations, not a
+sliding window. For time-based anchors, Span counts native periods: Elapsed
+Time Continuity OFF counts observed periods; ON uses aligned clock/calendar
+buckets including gaps. A gap causes one reset at the next available observation,
+without synthesizing observations. This control also applies to time-based
+Participation, whose settlement timing remains separate from Anchor resets.
+
+An enabled Anchor Model resets production estimators only when Alpha Source is
+Anchored or Composite. Active reset observations initialize them with alpha 1;
+the exact same `selectedAlpha` feeds production mean and dispersion. No Anchor
+requests no estimator reset.
+
+The lower-pane Statistic selector observes published production outputs without
+changing estimator state:
+
+| Statistic | Published value |
+| --- | --- |
+| Selected Alpha (default) | Exact coefficient supplied to the production estimators. |
+| Innovation | Current `hlc3` relative to the prior published mean, in the selected Return Model coordinates. |
+| Standardized Innovation | Innovation divided by prior published production dispersion, when that dispersion is valid and positive. |
+| Developing Dispersion | Exact current production dispersion used by the bands. |
+
+Innovation and Standardized Innovation are unavailable on reset observations
+or when their required published values are unavailable. Diagnostics do not
+cache or forward-fill missing outputs. Standardized Innovation is dimensionless
+and makes no Gaussian-normality claim.
+
+One visible Statistic is shown at a time using columns; unavailable values
+remain absent. Recursive Alpha, Participation Alpha, Anchor Alpha, and Raw
+Composite Alpha remain available in the Data Window.
 
 ---
 
@@ -554,14 +609,17 @@ for the complete license terms.
 
 ## Current development baseline
 
-Before the generic univariate-moment refactor, the permanent Python regression
-suite is:
+The latest previously validated permanent Python regression baseline, established
+before the current Anchor/Demo branch, is:
 
 ```text
-161 passed
+189 passed
 ```
 
-This baseline is treated as the pre-refactor semantic checkpoint.
+This records an existing validation result, not a successful rerun during the
+closure audit. That audit could not run pytest because `/usr/bin/python` lacks
+the `pytest` module. The earlier 161-pass result is the historical pre-refactor
+checkpoint.
 
 ---
 
@@ -569,14 +627,14 @@ This baseline is treated as the pre-refactor semantic checkpoint.
 
 XeL OnlineRecursion is currently in pre-release architectural hardening.
 
+Generic moment-state extraction and HeavyTail migration onto
+`AdaptiveMomentsState` are complete and validated. The /1 Anchor/Demo
+implementation is complete.
+
 Current work is focused on:
 
 ```text
 generic statistical-state architecture
-
-univariate moment-state extraction
-
-separation of generic moments from HeavyTail interpretation
 
 API consistency
 
@@ -584,6 +642,13 @@ documentation consistency
 
 cross-platform project organization
 ```
+
+Separately deferred work includes:
+
+- HeavyTail startup harmonization
+- a public functional `adaptiveMoments(...)` wrapper
+- external MarketTime/session/calendar policy
+- intrabar observation splitting or synthesis
 
 The project has not yet declared a stable public API.
 

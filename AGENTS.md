@@ -1593,6 +1593,439 @@ Avoid prematurely freezing unnecessary public tuple contracts.
 
 ---
 
+# /1 Alpha / Anchor / Demo architecture
+
+The following decisions are accepted for the final TradingView /1 Alpha /
+Anchor / Demo architecture phase. They define the implementation contract;
+recording them does not assert that the Demo implementation is complete.
+
+## Anchor Model
+
+Anchor Model is a Demo-level selector, not a new exported exchange/calendar
+enum. Its options are:
+
+```text
+No Anchor
+Rolling Anchor
+Minute Anchor
+Hour Anchor
+Daily Anchor
+Weekly Anchor
+Monthly Anchor
+```
+
+Existing public generic boundary seams remain primary:
+
+```text
+anchoredAlpha(contribution, boundaryWhen)
+iir1pole(..., resetWhen = boundaryWhen)
+marketDispersion(..., anchorWhen = boundaryWhen)
+```
+
+A future external time-policy library may supply arbitrary series-bool boundary
+events through these interfaces. Exchange/session-specific clocks remain
+explicitly deferred.
+
+`anchoredAlpha()` retains its existing volume-normalized semantics. Do not
+redesign it.
+
+## Anchor Span semantics
+
+No Anchor contributes component alpha zero, causes no estimator reset, and
+ignores Span. Demo source dispatch separately determines whether an active
+coefficient source exists.
+
+Rolling Anchor uses non-overlapping blocks of N chart observations, with
+boundaries at observation indices `0, N, 2N, 3N, ...`. The anchor observation
+is the first observation of the new population. Span = 1 anchors every
+observation. Elapsed Time Continuity has no effect on Rolling Anchor.
+
+For Minute / Hour / Day / Week / Month Anchor, Span = N native periods.
+Day, Week, and Month refer to the Daily, Weekly, and Monthly selector options.
+
+With Elapsed Time Continuity OFF, count observed native periods. The first
+encountered native period has ordinal 0. Each newly observed native period
+increments the ordinal once. Missing/unobserved periods do not increment it;
+repeated processing observations inside the same native period do not increment
+it. Anchor when entering ordinal `N, 2N, 3N, ...`.
+
+With Elapsed Time Continuity ON, use absolute aligned clock/calendar bucket
+identities. Anchor whenever the retained bucket identity changes. If time jumps
+across one or more empty buckets, perform one reset before the next available
+processing observation. Do not synthesize missing observations.
+
+Preserve the existing serial/alignment conventions:
+
+```text
+Minute: absolute minute serial
+Hour:   absolute hour serial
+Day:    trading-day serial
+Week:   Monday-aligned week serial
+Month:  year * 12 + month - 1
+```
+
+## Discrete observation limitation
+
+onlineRecursion does not split or synthesize estimator observations when an
+internal time boundary occurs inside one chart bar. A reset applies at the first
+available processing observation that can begin the new population. Intrabar
+estimator splitting is outside /1 scope.
+
+## Elapsed Time Continuity
+
+Elapsed Time Continuity is a shared temporal-geometry control for time-based
+Participation models and time-based Anchor models:
+
+```text
+OFF: observed-period continuity
+ON:  absolute clock/calendar continuity
+```
+
+It does not alter Recursive Decay, No Anchor, Rolling Anchor, Equal
+Participation, Rolling Volume, Open-Interest Turnover, Float Turnover, Fund
+Turnover, or other non-time Participation models.
+
+Participation settlement timing and Anchor reset timing remain distinct even
+when they share serial/bucket arithmetic.
+
+## Composite Alpha
+
+Composite becomes three-component using the existing complementary-retention
+algebra. Do not introduce a new combining rule.
+
+```text
+compositeAlpha(
+    compositeAlpha(recursiveAlpha, participationAlpha),
+    anchorAlpha
+)
+
+Equivalent: 1 - (1-r)(1-p)(1-a)
+```
+
+Neutral component values are:
+
+```text
+Recursive Decay Model = Bypass           -> 0
+Participation Model   = No Participation -> 0
+Anchor Model          = No Anchor        -> 0
+```
+
+Each disabled component is an identity element. Missing-input propagation of
+`compositeAlpha()` itself remains unchanged. Do not hide anchor initialization
+policy inside `compositeAlpha()`.
+
+## Canonical Demo alpha routing
+
+The Demo must produce one canonical estimator coefficient, `selectedAlpha`:
+
+```text
+component alphas
+    -> sourceAlpha
+    -> anchor initialization policy
+    -> selectedAlpha
+```
+
+The exact same `selectedAlpha` must be supplied to the recursive mean, supplied
+to dispersion/band calculations, and available to the lower-pane diagnostic
+system. No independent display-alpha recurrence is allowed. No duplicate
+estimator should exist only for visualization.
+
+## Demo source enablement
+
+Component-level zero identities remain unchanged. At the Demo Alpha Source
+dispatch layer, a selected source with no enabled component produces
+`sourceAlpha = na`.
+
+Demo-level enablement is defined conceptually as:
+
+```text
+recursiveEnabled = Recursive Decay Model != Bypass
+participationEnabled = Participation Model != No Participation
+anchorEnabled = Anchor Model != No Anchor
+
+anyCompositeEnabled =
+    recursiveEnabled or participationEnabled or anchorEnabled
+```
+
+Accepted dispatch policy:
+
+```text
+Alpha Source = Recursive Decay AND Recursive Decay Model = Bypass
+    -> sourceAlpha = na
+
+Alpha Source = Participation AND Participation Model = No Participation
+    -> sourceAlpha = na
+
+Alpha Source = Anchored AND Anchor Model = No Anchor
+    -> sourceAlpha = na
+
+Alpha Source = Composite AND NOT anyCompositeEnabled
+    -> sourceAlpha = na
+
+Alpha Source = Composite AND anyCompositeEnabled
+    -> sourceAlpha = raw three-leg Composite
+```
+
+Disabled legs still contribute zero inside `1 - (1-r)(1-p)(1-a)`. Enablement
+flags are Demo routing policy only; they do not change `decayAlpha()`,
+`participationAlpha()`, `anchoredAlpha()`, or `compositeAlpha()` semantics.
+
+Alpha zero remains a valid numerical coefficient and neutral Composite
+contribution. Alpha `na` here means the Demo has no active coefficient source.
+Do not reinterpret generic library alpha-zero semantics.
+
+## Demo anchor initialization policy
+
+At the Demo/application layer:
+
+```text
+selectedAlpha = estimatorAnchorWhen ? 1.0 : sourceAlpha
+```
+
+When `sourceAlpha` is `na` and no estimator anchor override is active,
+`selectedAlpha` remains `na`. No fallback or fabricated zero is introduced for
+display continuity. Existing estimator missing-call behavior remains unchanged.
+
+`estimatorAnchorWhen` is true only when all three conditions hold:
+
+```text
+Anchor Model is enabled
+AND Alpha Source is Anchored or Composite
+AND the selected Anchor boundary occurs
+```
+
+This makes the new population's current valid price observation full-weight at
+an active estimator reset. It resolves the Demo edge case where dispersion can
+force alpha = 1 at an anchor while the outer recursive mean can receive `na`.
+
+This is an application/Demo policy. It does not change `anchoredAlpha()`,
+`compositeAlpha()`, generic missing-data behavior outside anchor events,
+AdaptiveMoments, HeavyTail, covariance, quantile, expectile, tail mean, Huber,
+or regression.
+
+## Demo input organization
+
+Target logical groups:
+
+```text
+GENERAL
+    Return Model
+    Span
+    Elapsed Time Continuity
+
+DISPERSION
+    Dispersion Model
+
+ALPHA
+    Alpha Source
+    Recursive Decay Model
+    Participation Model
+    Anchor Model
+
+DIAGNOSTIC
+    Statistic
+```
+
+Span is one common positive Demo horizon N; its physical/statistical units
+remain model-dependent. Dispersion Model changes band/dispersion behavior.
+Alpha Source determines the coefficient-generation policy.
+
+## Lower-pane Diagnostic Statistic
+
+The lower pane must not be reduced permanently to Selected Alpha only. It is a
+selectable statistical demonstration/diagnostic. The Demo-level Statistic
+selector contains exactly four primary modes:
+
+```text
+Selected Alpha
+Innovation
+Standardized Innovation
+Developing Dispersion
+```
+
+Only one primary diagnostic series is visibly plotted at a time. Do not
+simultaneously overlay quantities with incompatible units/scales. The selector
+is Demo-level and does not require a new exported public enum.
+
+The one primary Statistic plot uses `plot.style_columns` for all four modes.
+This Demo presentation distinguishes positive and negative Innovation around
+the implicit zero baseline; `na` remains visually absent rather than bridged.
+Do not add a zero hline, alpha-one hline, sign-based colors, or additional
+visible diagnostic plots. The style choice changes no statistical semantics.
+
+## Selected Alpha diagnostic
+
+Selected Alpha plots the exact `selectedAlpha` supplied to the upper recursive
+estimators. This is a strict invariant: the lower pane must never display a
+different alpha while labeling it as the active/selected coefficient.
+
+When `selectedAlpha` is `na`, the Selected Alpha diagnostic has no plotted value
+for that observation/configuration. Do not fabricate zero to maintain continuity.
+
+Individual component values may remain available as secondary diagnostics,
+preferably Data Window only:
+
+```text
+Recursive Alpha
+Participation Alpha
+Anchor Alpha
+Raw Composite Alpha
+```
+
+They must not be confused visually with Selected Alpha.
+
+## Innovation diagnostic
+
+Innovation demonstrates the new evidence seen by the recursive location process
+before the current recursive update. It compares the current location input
+with the prior published production location, in coordinates compatible with
+the selected Return Model:
+
+```text
+priorLocation = demoMean[1]
+
+innovation = relativeReturn(demoReturnModel, hlc3, priorLocation)
+
+Arithmetic:  hlc3 / priorLocation - 1
+Logarithmic: log(hlc3 / priorLocation)
+```
+
+Use the existing `relativeReturn()` helper and its validity contract: Arithmetic
+requires present current/reference values and a nonzero reference; Logarithmic
+requires present, strictly positive current/reference values. Do not introduce
+a parallel formula or duplicate statistical recurrence.
+
+Innovation is `na` when `estimatorAnchorWhen` is true, the prior published
+production location is unavailable, or current/reference values fail the
+existing `relativeReturn()` validity rules. An unavailable published location
+suppresses Innovation even if private IIR state was internally preserved.
+Do not cache or forward-fill prior location.
+
+## Standardized Innovation diagnostic
+
+The name is Standardized Innovation. Do not call it a generic "Z-Score":
+Dispersion Model need not represent Gaussian sigma. This is a z-score-like
+dimensionless diagnostic.
+
+Its numerator is the Innovation defined above. Its denominator is the prior
+published production dispersion from the same production recursion and in
+compatible coordinates:
+
+```text
+priorDispersion = demoDevelopingDispersion[1]
+
+standardizedInnovation = innovation / priorDispersion
+```
+
+This is defined only when `estimatorAnchorWhen` is false, Innovation is valid,
+the prior published production dispersion is valid, and priorDispersion > 0.
+Otherwise return `na`, even if private dispersion state was internally preserved.
+
+An anchor/reset observation has no prior scale belonging to the new population,
+so Standardized Innovation is `na` on that reset observation. Do not substitute
+zero, clamp the score, add epsilon, or imply Gaussian normality. Do not cache or
+forward-fill prior dispersion.
+
+## Developing Dispersion diagnostic
+
+Developing Dispersion exposes the exact current `demoDevelopingDispersion`
+used by the upper band/projection construction. The diagnostic observes the
+production value already used by the Demo. Do not run a second dispersion
+estimator for the oscillator.
+
+## Diagnostic architectural rule
+
+Diagnostics observe published production recursion. Published outputs may be
+`na` on missing calls even while private estimator state is retained.
+`demoMean[1]` and `demoDevelopingDispersion[1]` are prior published production
+values, not unconditional views of hidden retained state.
+
+Diagnostics must not reconstruct private retained state, forward-fill production
+outputs, maintain a cache of last-valid estimator values, instantiate duplicate
+estimator state, or infer hidden branch-local dispersion state. This intentional
+conservative Demo observability policy does not change estimator missing-data
+semantics.
+
+Preferred dependencies are:
+
+```text
+current evidence + prior published production location
+    -> Innovation
+
+component alphas -> sourceAlpha -> anchor policy -> selectedAlpha
+    selectedAlpha -> recursive location
+    selectedAlpha -> dispersion -> Developing Dispersion diagnostic
+    selectedAlpha -> Selected Alpha diagnostic
+
+Innovation + prior published production dispersion from the same recursion
+    -> Standardized Innovation
+```
+
+Diagnostics are algebraic views or observations of the same published production
+recursion. Selecting a diagnostic does not change estimator state.
+
+## Demo tooltips
+
+Tooltips are required for Return Model, Span, Elapsed Time Continuity,
+Dispersion Model, Alpha Source, Recursive Decay Model, Participation Model,
+Anchor Model, and Diagnostic Statistic. They must describe actual semantics
+rather than marketing prose.
+
+They must explicitly communicate:
+
+```text
+Span:
+    common positive horizon N; units depend on active model
+
+Elapsed Time Continuity:
+    OFF counts observed periods
+    ON retains absolute clock/calendar continuity including gaps
+
+Anchor Model:
+    Rolling means non-overlapping blocks, not a sliding window
+    No Anchor disables this component and requests no estimator reset
+
+Alpha Source:
+    Composite combines enabled Recursive, Participation, and Anchor legs
+    if the selected source has no enabled component, no alpha is produced
+
+Recursive Decay Model:
+    Bypass disables this component
+    when Recursive Decay is the standalone Alpha Source, no alpha is produced
+
+Participation Model:
+    No Participation disables this component
+
+Anchor initialization:
+    active anchor observations use alpha 1 for estimator initialization
+
+Diagnostic Statistic:
+    selects one lower-pane statistical view without changing estimator state
+
+Standardized Innovation:
+    dimensionless innovation relative to prior valid published production dispersion;
+    not a claim of Gaussian normality
+```
+
+## Future external time-policy library
+
+Do not create exchange/session-specific enums in onlineRecursion /1. Do not add
+New York open/close policies, CME session policies, London policies, Asia
+policies, holiday calendars, or exchange calendars.
+
+A future external time-policy library can emit series-bool boundary events into
+the existing generic OR boundary/reset seams listed under Anchor Model. The
+built-in Minute/Hour/Day/Week/Month Demo policies are sufficient for /1.
+
+## Closed statistical components during /1 Demo work
+
+Do not reopen or modify any closed statistical component absent a genuine
+contradiction required by this contract. In particular, do not change
+AdaptiveMoments, HeavyTail, AdaptiveCovariance, AdaptiveQuantile,
+AdaptiveExpectile, AdaptiveTailMean, AdaptiveHuber, or regression/beta.
+
+---
+
 # Numerical policy
 
 Do not silently introduce estimator tolerances, clipping rules, epsilon
