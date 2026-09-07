@@ -6554,16 +6554,33 @@ export marketDispersion(
 // MODEL CONFIGURATION
 // -----------------------------------------------------------------------------
 
-DispersionModel demoDispersionModel = input.enum(
-    DispersionModel.realized,
-    "Dispersion Model",
-    group = "Library Demonstration"
-)
-
 ReturnModel demoReturnModel = input.enum(
     ReturnModel.logarithmic,
     "Return Model",
-    group = "Library Demonstration"
+    group = "GENERAL",
+    tooltip = "Arithmetic or logarithmic relative-return coordinates used by dispersion, band projection, and diagnostics."
+)
+
+int demoSpan = input.int(
+    20,
+    "Span",
+    minval = 1,
+    group = "GENERAL",
+    tooltip = "Common positive horizon N. Units depend on the active model."
+)
+
+bool demoElapsedTime = input.bool(
+    false,
+    "Elapsed Time Continuity",
+    group = "GENERAL",
+    tooltip = "OFF counts observed native periods. ON preserves absolute clock/calendar continuity including gaps. Applies only to time-based Participation and Anchor models."
+)
+
+DispersionModel demoDispersionModel = input.enum(
+    DispersionModel.realized,
+    "Dispersion Model",
+    group = "DISPERSION",
+    tooltip = "Selects the production evidence and scale model used for developing band width."
 )
 
 string demoAlphaSource = input.string(
@@ -6575,19 +6592,22 @@ string demoAlphaSource = input.string(
         "Anchored",
         "Composite"
     ],
-    group = "Library Demonstration"
+    group = "ALPHA",
+    tooltip = "Selects the coefficient supplied to the recursive estimators. Composite combines enabled Recursive, Participation, and Anchor components. If the selected source has no enabled component, no alpha is produced."
 )
 
 DecayModel demoDecayModel = input.enum(
     DecayModel.exponential,
     "Recursive Decay Model",
-    group = "Library Demonstration"
+    group = "ALPHA",
+    tooltip = "Maps Span to a fixed recursive alpha. Bypass disables this component. When Recursive Decay is the standalone Alpha Source, no alpha is produced."
 )
 
 ParticipationModel demoParticipationModel = input.enum(
     ParticipationModel.rollingVolume,
     "Participation Model",
-    group = "Library Demonstration"
+    group = "ALPHA",
+    tooltip = "Normalizes participation against the selected observation, volume, or turnover basis. No Participation disables this component."
 )
 
 string demoAnchorModel = input.string(
@@ -6602,20 +6622,21 @@ string demoAnchorModel = input.string(
         "Weekly Anchor",
         "Monthly Anchor"
     ],
-    group = "Library Demonstration"
+    group = "ALPHA",
+    tooltip = "Selects population boundaries when Alpha Source is Anchored or Composite. Rolling uses non-overlapping blocks of N chart observations, not a sliding window. Time modes use Span native periods. Active reset observations initialize with alpha 1. No Anchor disables this component and requests no estimator reset."
 )
 
-int demoSpan = input.int(
-    20,
-    "Span",
-    minval = 1,
-    group = "Library Demonstration"
-)
-
-bool demoElapsedTime = input.bool(
-    false,
-    "Elapsed Time Continuity",
-    group = "Library Demonstration"
+string demoStatisticSelection = input.string(
+    "Selected Alpha",
+    "Statistic",
+    options = [
+        "Selected Alpha",
+        "Innovation",
+        "Standardized Innovation",
+        "Developing Dispersion"
+    ],
+    group = "DIAGNOSTIC",
+    tooltip = "Selects one lower-pane diagnostic without changing estimator state. Standardized Innovation divides innovation by prior valid published production dispersion; it is dimensionless and assumes no Gaussian normality."
 )
 
 
@@ -6677,20 +6698,26 @@ float demoCompositeAlpha = compositeAlpha(
 )
 
 
+// Demo routing enablement is separate from component-level zero identities.
+bool demoRecursiveEnabled = demoDecayModel != DecayModel.bypass
+bool demoParticipationEnabled = demoParticipationModel != ParticipationModel.none
+bool demoAnyCompositeEnabled =
+     demoRecursiveEnabled or demoParticipationEnabled or demoAnchorEnabled
+
 // Select the coefficient family used by the price-space demonstration.
 float sourceAlpha = switch demoAlphaSource
 
     "Recursive Decay" =>
-        demoDecayAlpha
+        demoRecursiveEnabled ? demoDecayAlpha : na
 
     "Participation" =>
-        demoParticipationAlpha
+        demoParticipationEnabled ? demoParticipationAlpha : na
 
     "Anchored" =>
-        rawAnchorAlpha
+        demoAnchorEnabled ? rawAnchorAlpha : na
 
     "Composite" =>
-        demoCompositeAlpha
+        demoAnyCompositeEnabled ? demoCompositeAlpha : na
 
     =>
         na
@@ -6753,6 +6780,41 @@ float demoLower = relativeProjection(
 
 
 // -----------------------------------------------------------------------------
+// PUBLISHED PRODUCTION DIAGNOSTICS
+// -----------------------------------------------------------------------------
+
+// Observe published outputs only. Missing prior values remain missing; no
+// private retained state is reconstructed and no output is forward-filled.
+float priorLocation = demoMean[1]
+
+float innovation = estimatorAnchorWhen
+     ? na
+     : relativeReturn(
+        demoReturnModel,
+        hlc3,
+        priorLocation
+    )
+
+float priorDispersion = demoDevelopingDispersion[1]
+
+float standardizedInnovation =
+     not estimatorAnchorWhen
+     and not na(innovation)
+     and not na(priorDispersion)
+     and priorDispersion > 0
+         ? innovation / priorDispersion
+         : na
+
+// Selection observes completed production calculations and never controls them.
+float demoStatistic = switch demoStatisticSelection
+    "Selected Alpha" => selectedAlpha
+    "Innovation" => innovation
+    "Standardized Innovation" => standardizedInnovation
+    "Developing Dispersion" => demoDevelopingDispersion
+    => na
+
+
+// -----------------------------------------------------------------------------
 // DEMONSTRATION PLOTS
 // -----------------------------------------------------------------------------
 
@@ -6781,49 +6843,45 @@ plot(
 
 
 // -----------------------------------------------------------------------------
-// RECURSIVE COEFFICIENT COMPARISON
+// LOWER-PANE DIAGNOSTIC AND SECONDARY COMPONENT VALUES
 // -----------------------------------------------------------------------------
 
+// One primary visible series; its units are determined by Statistic.
+plot(
+    demoStatistic,
+    "Statistic",
+    color = color.blue,
+    linewidth = 2,
+    style = plot.style_columns
+)
+
+// Component values are secondary diagnostics, available only in the Data Window.
 plot(
     demoDecayAlpha,
-    "Recursive Decay Alpha",
-    color = color.blue
+    "Recursive Alpha",
+    color = color.blue,
+    display = display.data_window
 )
 
 plot(
     demoParticipationAlpha,
     "Participation Alpha",
-    color = color.orange
+    color = color.orange,
+    display = display.data_window
 )
 
 plot(
     rawAnchorAlpha,
-    "Anchored Alpha",
-    color = color.green
+    "Anchor Alpha",
+    color = color.green,
+    display = display.data_window
 )
 
 plot(
     demoCompositeAlpha,
-    "Composite Alpha",
+    "Raw Composite Alpha",
     color = color.purple,
-    linewidth = 2
-)
-
-hline(
-    0.0,
-    "Alpha = 0",
-    color = color.new(
-        color.gray,
-        80
-    )
-)
-
-hline(
-    1.0,
-    "Alpha = 1",
-    color = color.new(
-        color.gray,
-        80
-    )
+    linewidth = 2,
+    display = display.data_window
 )
 
