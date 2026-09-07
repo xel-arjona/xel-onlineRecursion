@@ -6843,7 +6843,7 @@ plot(
 
 
 // -----------------------------------------------------------------------------
-// LOWER-PANE DIAGNOSTIC AND SECONDARY COMPONENT VALUES
+// LOWER-PANE DIAGNOSTIC
 // -----------------------------------------------------------------------------
 
 // One primary visible series; its units are determined by Statistic.
@@ -6853,35 +6853,5 @@ plot(
     color = color.blue,
     linewidth = 2,
     style = plot.style_columns
-)
-
-// Component values are secondary diagnostics, available only in the Data Window.
-plot(
-    demoDecayAlpha,
-    "Recursive Alpha",
-    color = color.blue,
-    display = display.data_window
-)
-
-plot(
-    demoParticipationAlpha,
-    "Participation Alpha",
-    color = color.orange,
-    display = display.data_window
-)
-
-plot(
-    rawAnchorAlpha,
-    "Anchor Alpha",
-    color = color.green,
-    display = display.data_window
-)
-
-plot(
-    demoCompositeAlpha,
-    "Raw Composite Alpha",
-    color = color.purple,
-    linewidth = 2,
-    display = display.data_window
 )
 
